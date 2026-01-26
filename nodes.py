@@ -1714,6 +1714,7 @@ class LoadImage:
     CATEGORY = "image"
     RETURN_TYPES = ("IMAGE", "MASK")
     FUNCTION = "load_image"
+    SEARCH_ALIASES = ["load image", "open image", "import image", "image input", "upload image", "read image", "image loader"]
     def load_image(self, image):
         image_path = folder_paths.get_annotated_filepath(image)
         img = node_helpers.pillow(Image.open, image_path)
