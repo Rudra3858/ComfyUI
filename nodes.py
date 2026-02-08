@@ -1700,15 +1700,36 @@ class LoadImage:
     @classmethod
     def INPUT_TYPES(s):
         input_dir = folder_paths.get_input_directory()
-        image_paths = []
-        for root, _, files in os.walk(input_dir, followlinks=True):
-            image_files = folder_paths.filter_files_content_types(files, ["image"])
-            for image_file in image_files:
-                path_relative = os.path.relpath(os.path.join(root, image_file), input_dir)
-                path_relative = path_relative.replace('\\', '/')
-                image_paths.append(path_relative)
+        files = []
+        limit = 1000
+        recursive_scan_failed = False
+
+        # Attempt recursive scan first
+        try:
+            for root, _, file_list in os.walk(input_dir, followlinks=False):
+                if recursive_scan_failed:
+                    break
+                
+                image_files = folder_paths.filter_files_content_types(file_list, ["image"])
+                
+                for image_file in image_files:
+                    if len(files) >= limit:
+                        recursive_scan_failed = True
+                        break
+                        
+                    path_relative = os.path.relpath(os.path.join(root, image_file), input_dir)
+                    path_relative = path_relative.replace('\\', '/')
+                    files.append(path_relative)
+        except Exception:
+            recursive_scan_failed = True
+
+        # Fallback to original non-recursive method if limit exceeded or error
+        if recursive_scan_failed or not files:
+            files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+            files = folder_paths.filter_files_content_types(files, ["image"])
+
         return {"required":
-                    {"image": (sorted(list(set(image_paths))), {"image_upload": True})},
+                    {"image": (sorted(list(dict.fromkeys(files))), {"image_upload": True})},
                 }
 
     CATEGORY = "image"
