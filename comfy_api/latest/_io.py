@@ -1436,6 +1436,11 @@ class Schema:
     """Flags a node as expandable, allowing NodeOutput to include 'expand' property."""
     accept_all_inputs: bool=False
     """When True, all inputs from the prompt will be passed to the node as kwargs, even if not defined in the schema."""
+    lazy_outputs: bool=False
+    """When True, cache will invalidate when output connections change, and expected_outputs will be available.
+
+    Use this for nodes that can skip computing outputs that aren't connected downstream.
+    Access via `get_executing_context().expected_outputs` - outputs NOT in the set are definitely unused."""
 
     def validate(self):
         '''Validate the schema:
@@ -1881,6 +1886,14 @@ class _ComfyNodeBaseInternal(_ComfyNodeInternal):
             cls.GET_SCHEMA()
         return cls._ACCEPT_ALL_INPUTS
 
+    _LAZY_OUTPUTS = None
+    @final
+    @classproperty
+    def LAZY_OUTPUTS(cls):  # noqa
+        if cls._LAZY_OUTPUTS is None:
+            cls.GET_SCHEMA()
+        return cls._LAZY_OUTPUTS
+
     @final
     @classmethod
     def INPUT_TYPES(cls) -> dict[str, dict]:
@@ -1923,6 +1936,8 @@ class _ComfyNodeBaseInternal(_ComfyNodeInternal):
             cls._NOT_IDEMPOTENT = schema.not_idempotent
         if cls._ACCEPT_ALL_INPUTS is None:
             cls._ACCEPT_ALL_INPUTS = schema.accept_all_inputs
+        if cls._LAZY_OUTPUTS is None:
+            cls._LAZY_OUTPUTS = schema.lazy_outputs
 
         if cls._RETURN_TYPES is None:
             output = []

@@ -6,6 +6,7 @@ from .tools import VariantSupport
 from comfy_execution.graph_utils import GraphBuilder
 from comfy.comfy_types.node_typing import ComfyNodeABC
 from comfy.comfy_types import IO
+from comfy_execution.utils import get_executing_context
 
 class TestLazyMixImages:
     @classmethod
@@ -482,6 +483,57 @@ class TestOutputNodeWithSocketOutput:
         result = image * value
         return (result,)
 
+
+class TestExpectedOutputs:
+    """Test node for the expected_outputs feature.
+
+    This node has 3 IMAGE outputs that encode which outputs were expected:
+    - White image (255) if the output was in expected_outputs
+    - Black image (0) if the output was NOT in expected_outputs
+
+    This allows integration tests to verify which outputs were expected by checking pixel values.
+    """
+    LAZY_OUTPUTS = True  # Opt into cache invalidation on output connection changes
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "height": ("INT", {"default": 64, "min": 1, "max": 1024}),
+                "width": ("INT", {"default": 64, "min": 1, "max": 1024}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("output0", "output1", "output2")
+    FUNCTION = "execute"
+    CATEGORY = "_for_testing"
+
+    def execute(self, height, width):
+        ctx = get_executing_context()
+
+        # Default: assume all outputs are expected (backwards compatibility)
+        output0_expected = True
+        output1_expected = True
+        output2_expected = True
+
+        if ctx is not None and ctx.expected_outputs is not None:
+            output0_expected = 0 in ctx.expected_outputs
+            output1_expected = 1 in ctx.expected_outputs
+            output2_expected = 2 in ctx.expected_outputs
+
+        # Return white image if expected, black if not
+        # This allows tests to verify which outputs were expected via pixel values
+        white = torch.ones(1, height, width, 3)
+        black = torch.zeros(1, height, width, 3)
+
+        return (
+            white if output0_expected else black,
+            white if output1_expected else black,
+            white if output2_expected else black,
+        )
+
+
 TEST_NODE_CLASS_MAPPINGS = {
     "TestLazyMixImages": TestLazyMixImages,
     "TestVariadicAverage": TestVariadicAverage,
@@ -498,6 +550,7 @@ TEST_NODE_CLASS_MAPPINGS = {
     "TestSleep": TestSleep,
     "TestParallelSleep": TestParallelSleep,
     "TestOutputNodeWithSocketOutput": TestOutputNodeWithSocketOutput,
+    "TestExpectedOutputs": TestExpectedOutputs,
 }
 
 TEST_NODE_DISPLAY_NAME_MAPPINGS = {
@@ -516,4 +569,5 @@ TEST_NODE_DISPLAY_NAME_MAPPINGS = {
     "TestSleep": "Test Sleep",
     "TestParallelSleep": "Test Parallel Sleep",
     "TestOutputNodeWithSocketOutput": "Test Output Node With Socket Output",
+    "TestExpectedOutputs": "Test Expected Outputs",
 }

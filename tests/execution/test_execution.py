@@ -574,6 +574,104 @@ class TestExecution:
         else:
             assert result.did_run(test_node), "The execution should have been re-run"
 
+    def test_expected_outputs_all_connected(self, client: ComfyClient, builder: GraphBuilder):
+        """Test that expected_outputs contains all connected outputs."""
+        g = builder
+        # Create a node with 3 outputs, all connected
+        expected_outputs_node = g.node("TestExpectedOutputs", height=64, width=64)
+
+        # Connect all 3 outputs to preview nodes
+        output0 = g.node("PreviewImage", images=expected_outputs_node.out(0))
+        output1 = g.node("PreviewImage", images=expected_outputs_node.out(1))
+        output2 = g.node("PreviewImage", images=expected_outputs_node.out(2))
+
+        result = client.run(g)
+
+        # All outputs should be white (255) since all are connected
+        images0 = result.get_images(output0)
+        images1 = result.get_images(output1)
+        images2 = result.get_images(output2)
+
+        assert len(images0) == 1, "Should have 1 image for output0"
+        assert len(images1) == 1, "Should have 1 image for output1"
+        assert len(images2) == 1, "Should have 1 image for output2"
+
+        # White pixels = 255, meaning output was in expected_outputs
+        assert numpy.array(images0[0]).min() == 255, "Output 0 should be white (was expected)"
+        assert numpy.array(images1[0]).min() == 255, "Output 1 should be white (was expected)"
+        assert numpy.array(images2[0]).min() == 255, "Output 2 should be white (was expected)"
+
+    def test_expected_outputs_partial_connected(self, client: ComfyClient, builder: GraphBuilder):
+        """Test that expected_outputs only contains connected outputs."""
+        g = builder
+        # Create a node with 3 outputs, only some connected
+        expected_outputs_node = g.node("TestExpectedOutputs", height=64, width=64)
+
+        # Only connect outputs 0 and 2, leave output 1 disconnected
+        output0 = g.node("PreviewImage", images=expected_outputs_node.out(0))
+        # output1 is intentionally not connected
+        output2 = g.node("PreviewImage", images=expected_outputs_node.out(2))
+
+        result = client.run(g)
+
+        # Connected outputs should be white (255)
+        images0 = result.get_images(output0)
+        images2 = result.get_images(output2)
+
+        assert len(images0) == 1, "Should have 1 image for output0"
+        assert len(images2) == 1, "Should have 1 image for output2"
+
+        # White = expected, output 1 is not connected so we can't verify it directly but outputs 0 and 2 should be white
+        assert numpy.array(images0[0]).min() == 255, "Output 0 should be white (was expected)"
+        assert numpy.array(images2[0]).min() == 255, "Output 2 should be white (was expected)"
+
+    def test_expected_outputs_single_connected(self, client: ComfyClient, builder: GraphBuilder):
+        """Test that expected_outputs works with single connected output."""
+        g = builder
+        # Create a node with 3 outputs, only one connected
+        expected_outputs_node = g.node("TestExpectedOutputs", height=64, width=64)
+
+        # Only connect output 1
+        output1 = g.node("PreviewImage", images=expected_outputs_node.out(1))
+
+        result = client.run(g)
+
+        images1 = result.get_images(output1)
+        assert len(images1) == 1, "Should have 1 image for output1"
+
+        # Output 1 should be white (connected), others are not visible in this test
+        assert numpy.array(images1[0]).min() == 255, "Output 1 should be white (was expected)"
+
+    def test_expected_outputs_cache_invalidation(self, client: ComfyClient, builder: GraphBuilder, server):
+        """Test that cache invalidates when output connections change."""
+        g = builder
+        # Use unique dimensions to avoid cache collision with other expected_outputs tests
+        expected_outputs_node = g.node("TestExpectedOutputs", height=32, width=32)
+
+        # First run: only connect output 0
+        output0 = g.node("PreviewImage", images=expected_outputs_node.out(0))
+
+        result1 = client.run(g)
+        assert result1.did_run(expected_outputs_node), "First run should execute the node"
+
+        # Second run: same connections, should be cached
+        result2 = client.run(g)
+        if server["should_cache_results"]:
+            assert not result2.did_run(expected_outputs_node), "Second run should be cached"
+
+        # Third run: add connection to output 2
+        output2 = g.node("PreviewImage", images=expected_outputs_node.out(2))
+
+        result3 = client.run(g)
+        # Because LAZY_OUTPUTS=True, changing connections should invalidate cache
+        if server["should_cache_results"]:
+            assert result3.did_run(expected_outputs_node), "Adding output connection should invalidate cache"
+
+        # Verify both outputs are now white
+        images0 = result3.get_images(output0)
+        images2 = result3.get_images(output2)
+        assert numpy.array(images0[0]).min() == 255, "Output 0 should be white"
+        assert numpy.array(images2[0]).min() == 255, "Output 2 should be white"
 
     def test_parallel_sleep_nodes(self, client: ComfyClient, builder: GraphBuilder, skip_timing_checks):
         # Warmup execution to ensure server is fully initialized
