@@ -4,7 +4,7 @@ import re
 import logging
 import ctypes.util
 import importlib.util
-from typing import TypedDict
+from typing import Type, TypedDict
 
 import numpy as np
 import torch
@@ -62,22 +62,6 @@ def _check_opengl_availability():
 # Run early check at import time
 logger.debug("nodes_glsl: running _check_opengl_availability at import time")
 _check_opengl_availability()
-
-# OpenGL modules - initialized lazily when context is created
-gl = None
-glfw = None
-EGL = None
-
-
-def _import_opengl():
-    """Import OpenGL module. Called after context is created."""
-    global gl
-    if gl is None:
-        logger.debug("_import_opengl: importing OpenGL.GL")
-        import OpenGL.GL as _gl
-        gl = _gl
-        logger.debug("_import_opengl: import completed")
-    return gl
 
 
 class SizeModeInput(TypedDict):
@@ -157,258 +141,115 @@ def _detect_pass_count(source: str) -> int:
     return 1
 
 
-def _init_glfw():
-    """Initialize GLFW. Returns (window, glfw_module). Raises RuntimeError on failure."""
-    logger.debug("_init_glfw: starting")
-    # On macOS, glfw.init() must be called from main thread or it hangs forever
-    if sys.platform == "darwin":
-        logger.debug("_init_glfw: skipping on macOS")
-        raise RuntimeError("GLFW backend not supported on macOS")
-
-    logger.debug("_init_glfw: importing glfw module")
-    import glfw as _glfw
-
-    logger.debug("_init_glfw: calling glfw.init()")
-    if not _glfw.init():
-        raise RuntimeError("glfw.init() failed")
-
-    try:
-        logger.debug("_init_glfw: setting window hints")
-        _glfw.window_hint(_glfw.VISIBLE, _glfw.FALSE)
-        _glfw.window_hint(_glfw.CONTEXT_VERSION_MAJOR, 3)
-        _glfw.window_hint(_glfw.CONTEXT_VERSION_MINOR, 3)
-        _glfw.window_hint(_glfw.OPENGL_PROFILE, _glfw.OPENGL_CORE_PROFILE)
-
-        logger.debug("_init_glfw: calling create_window()")
-        window = _glfw.create_window(64, 64, "ComfyUI GLSL", None, None)
-        if not window:
-            raise RuntimeError("glfw.create_window() failed")
-
-        logger.debug("_init_glfw: calling make_context_current()")
-        _glfw.make_context_current(window)
-        logger.debug("_init_glfw: completed successfully")
-        return window, _glfw
-    except Exception:
-        logger.debug("_init_glfw: failed, terminating glfw")
-        _glfw.terminate()
-        raise
-
-
-def _init_egl():
-    """Initialize EGL for headless rendering. Returns (display, context, surface, EGL_module). Raises RuntimeError on failure."""
-    logger.debug("_init_egl: starting")
-    from OpenGL import EGL as _EGL
-    from OpenGL.EGL import (
-        eglGetDisplay, eglInitialize, eglChooseConfig, eglCreateContext,
-        eglMakeCurrent, eglCreatePbufferSurface, eglBindAPI,
-        eglTerminate, eglDestroyContext, eglDestroySurface,
-        EGL_DEFAULT_DISPLAY, EGL_NO_CONTEXT, EGL_NONE,
-        EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-        EGL_RED_SIZE, EGL_GREEN_SIZE, EGL_BLUE_SIZE, EGL_ALPHA_SIZE, EGL_DEPTH_SIZE,
-        EGL_WIDTH, EGL_HEIGHT, EGL_OPENGL_API,
-    )
-    logger.debug("_init_egl: imports completed")
-
-    display = None
-    context = None
-    surface = None
-
-    try:
-        logger.debug("_init_egl: calling eglGetDisplay()")
-        display = eglGetDisplay(EGL_DEFAULT_DISPLAY)
-        if display == _EGL.EGL_NO_DISPLAY:
-            raise RuntimeError("eglGetDisplay() failed")
-
-        logger.debug("_init_egl: calling eglInitialize()")
-        major, minor = _EGL.EGLint(), _EGL.EGLint()
-        if not eglInitialize(display, major, minor):
-            display = None  # Not initialized, don't terminate
-            raise RuntimeError("eglInitialize() failed")
-        logger.debug(f"_init_egl: EGL version {major.value}.{minor.value}")
-
-        config_attribs = [
-            EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-            EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
-            EGL_DEPTH_SIZE, 0, EGL_NONE
-        ]
-        configs = (_EGL.EGLConfig * 1)()
-        num_configs = _EGL.EGLint()
-        if not eglChooseConfig(display, config_attribs, configs, 1, num_configs) or num_configs.value == 0:
-            raise RuntimeError("eglChooseConfig() failed")
-        config = configs[0]
-        logger.debug(f"_init_egl: config chosen, num_configs={num_configs.value}")
-
-        if not eglBindAPI(EGL_OPENGL_API):
-            raise RuntimeError("eglBindAPI() failed")
-
-        logger.debug("_init_egl: calling eglCreateContext()")
-        context_attribs = [
-            _EGL.EGL_CONTEXT_MAJOR_VERSION, 3,
-            _EGL.EGL_CONTEXT_MINOR_VERSION, 3,
-            _EGL.EGL_CONTEXT_OPENGL_PROFILE_MASK, _EGL.EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
-            EGL_NONE
-        ]
-        context = eglCreateContext(display, config, EGL_NO_CONTEXT, context_attribs)
-        if context == EGL_NO_CONTEXT:
-            raise RuntimeError("eglCreateContext() failed")
-
-        logger.debug("_init_egl: calling eglCreatePbufferSurface()")
-        pbuffer_attribs = [EGL_WIDTH, 64, EGL_HEIGHT, 64, EGL_NONE]
-        surface = eglCreatePbufferSurface(display, config, pbuffer_attribs)
-        if surface == _EGL.EGL_NO_SURFACE:
-            raise RuntimeError("eglCreatePbufferSurface() failed")
-
-        logger.debug("_init_egl: calling eglMakeCurrent()")
-        if not eglMakeCurrent(display, surface, surface, context):
-            raise RuntimeError("eglMakeCurrent() failed")
-
-        logger.debug("_init_egl: completed successfully")
-        return display, context, surface, _EGL
-
-    except Exception:
-        logger.debug("_init_egl: failed, cleaning up")
-        # Clean up any resources on failure
-        if surface is not None:
-            eglDestroySurface(display, surface)
-        if context is not None:
-            eglDestroyContext(display, context)
-        if display is not None:
-            eglTerminate(display)
-        raise
-
-
-def _init_osmesa():
-    """Initialize OSMesa for software rendering. Returns (context, buffer). Raises RuntimeError on failure."""
-    import ctypes
-
-    logger.debug("_init_osmesa: starting")
-    os.environ["PYOPENGL_PLATFORM"] = "osmesa"
-
-    logger.debug("_init_osmesa: importing OpenGL.osmesa")
-    from OpenGL import GL as _gl
-    from OpenGL.osmesa import (
-        OSMesaCreateContextExt, OSMesaMakeCurrent, OSMesaDestroyContext,
-        OSMESA_RGBA,
-    )
-    logger.debug("_init_osmesa: imports completed")
-
-    ctx = OSMesaCreateContextExt(OSMESA_RGBA, 24, 0, 0, None)
-    if not ctx:
-        raise RuntimeError("OSMesaCreateContextExt() failed")
-
-    width, height = 64, 64
-    buffer = (ctypes.c_ubyte * (width * height * 4))()
-
-    logger.debug("_init_osmesa: calling OSMesaMakeCurrent()")
-    if not OSMesaMakeCurrent(ctx, buffer, _gl.GL_UNSIGNED_BYTE, width, height):
-        OSMesaDestroyContext(ctx)
-        raise RuntimeError("OSMesaMakeCurrent() failed")
-
-    logger.debug("_init_osmesa: completed successfully")
-    return ctx, buffer
+############################################################
 
 
 class GLContext:
     """Manages OpenGL context and resources for shader execution.
 
-    Tries backends in order: GLFW (desktop) → EGL (headless GPU) → OSMesa (software).
+    Acts as a singleton factory: ``GLContext`` itself is an "abstract" class (not a true ABC though) and never instantiates itself directly. Instead, its instance is always one of "concrete backend" contexts - a first valid subclass in the fallback sequence. ``GLContext`` doesn't inherit from ABC just to prevent IDE warnings caused by this polymorphism. For all intents and purposes, it **IS** a singleton-ABC.
+
+    Backends fallback order: GLFW (desktop) → EGL (headless GPU) → OSMesa (software). See ``__subclass_fallback_order()``.
     """
 
-    _instance = None
-    _initialized = False
+    __instance: 'GLContext' = None  # The singleton
 
     def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+        # Since ``GLContext`` is a singleton anyway, we should store it
+        # explicitly in ``GLContext.__instance``, NOT in ``cls.__instance``.
+        if GLContext.__instance is None:
+            GLContext.__instance = GLContext.__new_instance_using_concrete_class_fallback_order()
+            assert isinstance(GLContext.__instance, GLContext)
+        return GLContext.__instance
+
+    @staticmethod
+    def __concrete_class_fallback_order() -> tuple[Type['GLContext'], ...]:
+        """The order concrete subclasses are tried in: GLFW → EGL → OSMesa."""
+        return _GLContextGLFW, _GLContextEGL, _GLContextOSMesa
+
+    @staticmethod
+    def __new_instance_using_concrete_class_fallback_order() -> 'GLContext':
+        """Try to init backends in the fallback order.
+
+        Called from ``__new__()`` on first attempt to instantiate the singleton.
+        Raises RuntimeError if none of the backends work.
+        """
+        errors: list[tuple[str, Exception]] = []
+
+        for cls in GLContext.__concrete_class_fallback_order():
+            name = cls.backend_name()
+            logger.debug(f"GLContext.__init__: trying {name} backend")
+            try:
+                instance: GLContext = object.__new__(cls)
+                # Since this code is called while in `__new__()`, we need to manually call `__init__()`, too.
+                # Otherwise, Python would call it only AFTER `__new__()`, causing init errors outside our try-except check.
+                instance.__init__()
+                logger.debug(f"GLContext.__init__: {name} backend succeeded. The singleton is: {cls!r}")
+                logger.info(f"Concrete GLSL context initialized as: {name}")
+                return instance
+            except Exception as e:
+                logger.debug(f"GLContext.__init__: {name} backend failed: {e}")
+                errors.append((name, e))
+
+        # If we still haven't returned, none of the backends succeeded.
+        # Let's raise the error.
+
+        if sys.platform == "win32":
+            platform_help = (
+                "Windows: Ensure GPU drivers are installed and display is available.\n"
+                "         CPU-only/headless mode is not supported on Windows."
+            )
+        elif sys.platform == "darwin":
+            platform_help = (
+                "macOS: GLFW is not supported.\n"
+                "  Install OSMesa via Homebrew: brew install mesa\n"
+                "  Then: pip install PyOpenGL PyOpenGL-accelerate"
+            )
+        else:
+            platform_help = (
+                "Linux: Install one of these backends:\n"
+                "  Desktop:           sudo apt install libgl1-mesa-glx libglfw3\n"
+                "  Headless with GPU: sudo apt install libegl1-mesa libgl1-mesa-dri\n"
+                "  Headless (CPU):    sudo apt install libosmesa6"
+            )
+
+        error_details = "\n".join(f"  {name}: {err}" for name, err in errors)
+        raise RuntimeError(
+            f"Failed to create OpenGL context.\n\n"
+            f"Backend errors:\n{error_details}\n\n"
+            f"{platform_help}"
+        )
 
     def __init__(self):
-        if GLContext._initialized:
-            logger.debug("GLContext.__init__: already initialized, skipping")
-            return
+        try:
+            # noinspection PyUnresolvedReferences
+            if self.__initialized:
+                # 99% of the time (after first init) we get here and just return
+                logger.debug("GLContext.__init__: already initialized, skipping")
+                return
+            logger.warning("GLContext.__init__: weird state: the singleton has <__initialized> attribute, but is NOT initialized.")
+        except AttributeError:
+            # First instance creation: it was created with `__new__()`, but hasn't been initialized yet
+            pass
 
         logger.debug("GLContext.__init__: starting initialization")
 
-        global glfw, EGL
-
-        import time
-        start = time.perf_counter()
-
-        self._backend = None
-        self._window = None
-        self._egl_display = None
-        self._egl_context = None
-        self._egl_surface = None
-        self._osmesa_ctx = None
-        self._osmesa_buffer = None
+        self.__initialized: bool = False
         self._vao = None
 
-        # Try backends in order: GLFW → EGL → OSMesa
-        errors = []
+        import time
+        start_time: float = time.perf_counter()
 
-        logger.debug("GLContext.__init__: trying GLFW backend")
-        try:
-            self._window, glfw = _init_glfw()
-            self._backend = "glfw"
-            logger.debug("GLContext.__init__: GLFW backend succeeded")
-        except Exception as e:
-            logger.debug(f"GLContext.__init__: GLFW backend failed: {e}")
-            errors.append(("GLFW", e))
-
-        if self._backend is None:
-            logger.debug("GLContext.__init__: trying EGL backend")
-            try:
-                self._egl_display, self._egl_context, self._egl_surface, EGL = _init_egl()
-                self._backend = "egl"
-                logger.debug("GLContext.__init__: EGL backend succeeded")
-            except Exception as e:
-                logger.debug(f"GLContext.__init__: EGL backend failed: {e}")
-                errors.append(("EGL", e))
-
-        if self._backend is None:
-            logger.debug("GLContext.__init__: trying OSMesa backend")
-            try:
-                self._osmesa_ctx, self._osmesa_buffer = _init_osmesa()
-                self._backend = "osmesa"
-                logger.debug("GLContext.__init__: OSMesa backend succeeded")
-            except Exception as e:
-                logger.debug(f"GLContext.__init__: OSMesa backend failed: {e}")
-                errors.append(("OSMesa", e))
-
-        if self._backend is None:
-            if sys.platform == "win32":
-                platform_help = (
-                    "Windows: Ensure GPU drivers are installed and display is available.\n"
-                    "         CPU-only/headless mode is not supported on Windows."
-                )
-            elif sys.platform == "darwin":
-                platform_help = (
-                    "macOS: GLFW is not supported.\n"
-                    "  Install OSMesa via Homebrew: brew install mesa\n"
-                    "  Then: pip install PyOpenGL PyOpenGL-accelerate"
-                )
-            else:
-                platform_help = (
-                    "Linux: Install one of these backends:\n"
-                    "  Desktop:           sudo apt install libgl1-mesa-glx libglfw3\n"
-                    "  Headless with GPU: sudo apt install libegl1-mesa libgl1-mesa-dri\n"
-                    "  Headless (CPU):    sudo apt install libosmesa6"
-                )
-
-            error_details = "\n".join(f"  {name}: {err}" for name, err in errors)
-            raise RuntimeError(
-                f"Failed to create OpenGL context.\n\n"
-                f"Backend errors:\n{error_details}\n\n"
-                f"{platform_help}"
-            )
+        self._init_backend_concrete()  # must fully initialize backend
 
         # Now import OpenGL.GL (after context is current)
         logger.debug("GLContext.__init__: importing OpenGL.GL")
-        _import_opengl()
+        self.__import_opengl()
+        gl = self._gl
 
         # Create VAO (required for core profile, but OSMesa may use compat profile)
         logger.debug("GLContext.__init__: creating VAO")
+        vao = None
         try:
             vao = gl.glGenVertexArrays(1)
             gl.glBindVertexArray(vao)
@@ -424,310 +265,556 @@ class GLContext:
                 except Exception:
                     pass
 
-        elapsed = (time.perf_counter() - start) * 1000
+        self._glBindVertexArray = gl.glBindVertexArray
+        self.__initialized = True
+
+        elapsed = (time.perf_counter() - start_time) * 1000
 
         # Log device info
-        renderer = gl.glGetString(gl.GL_RENDERER)
-        vendor = gl.glGetString(gl.GL_VENDOR)
-        version = gl.glGetString(gl.GL_VERSION)
-        renderer = renderer.decode() if renderer else "Unknown"
-        vendor = vendor.decode() if vendor else "Unknown"
-        version = version.decode() if version else "Unknown"
 
-        GLContext._initialized = True
-        logger.info(f"GLSL context initialized in {elapsed:.1f}ms ({self._backend}) - {renderer} ({vendor}), GL {version}")
+        def gl_string(value) -> str:
+            string = gl.glGetString(value)
+            return string.decode() if string else "Unknown"
+
+        renderer, vendor, version = (
+            gl_string(x) for x in [gl.GL_RENDERER, gl.GL_VENDOR, gl.GL_VERSION]
+        )
+        logger.info(f"GLSL context initialized in {elapsed:.1f}ms ({self.backend_name()}) - {renderer} ({vendor}), GL {version}")
+
+    def __import_opengl(self):
+        """Import OpenGL module. Called after context is created."""
+        logger.debug("__import_opengl: importing OpenGL.GL")
+        from OpenGL import GL
+        self._gl = GL
+        logger.debug("__import_opengl: import completed")
+
+    @classmethod
+    def backend_name(cls) -> str:
+        """Per-concrete-class unique string identifier. Used for log messages."""
+        raise NotImplementedError("Must be implemented in a concrete subclass.")
+
+    def _init_backend_concrete(self):
+        """Actual initialisation hook of a concrete backend. Called mid-init."""
+        raise NotImplementedError("Must be implemented in a concrete subclass.")
+
+    def _make_current_concrete(self):
+        raise NotImplementedError("Must be implemented in a concrete subclass.")
 
     def make_current(self):
-        if self._backend == "glfw":
-            glfw.make_context_current(self._window)
-        elif self._backend == "egl":
-            from OpenGL.EGL import eglMakeCurrent
-            eglMakeCurrent(self._egl_display, self._egl_surface, self._egl_surface, self._egl_context)
-        elif self._backend == "osmesa":
-            from OpenGL.osmesa import OSMesaMakeCurrent
-            OSMesaMakeCurrent(self._osmesa_ctx, self._osmesa_buffer, gl.GL_UNSIGNED_BYTE, 64, 64)
-
+        self._make_current_concrete()
         if self._vao is not None:
-            gl.glBindVertexArray(self._vao)
+            self._glBindVertexArray(self._vao)
 
+    # noinspection PyPep8Naming
+    @property
+    def GL(self):
+        """Properly yet lazily imported ``OpenGL.GL`` module."""
+        return self._gl
 
-def _compile_shader(source: str, shader_type: int) -> int:
-    """Compile a shader and return its ID."""
-    shader = gl.glCreateShader(shader_type)
-    gl.glShaderSource(shader, source)
-    gl.glCompileShader(shader)
+##########
 
-    if gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS) != gl.GL_TRUE:
-        error = gl.glGetShaderInfoLog(shader).decode()
-        gl.glDeleteShader(shader)
-        raise RuntimeError(f"Shader compilation failed:\n{error}")
+class _GLContextGLFW(GLContext):
+    """Concrete GLContext using GLFW backend."""
+    @classmethod
+    def backend_name(cls) -> str:
+        return "GLFW"
 
-    return shader
+    def _init_backend_concrete(self):
+        """Initialize GLFW. Raises RuntimeError on failure."""
+        logger.debug("_init_backend_concrete (GLFW): starting")
+        # On macOS, glfw.init() must be called from main thread or it hangs forever
+        if sys.platform == "darwin":
+            logger.debug("_init_backend_concrete (GLFW): skipping on macOS")
+            raise RuntimeError("GLFW backend not supported on macOS")
 
+        logger.debug("_init_backend_concrete (GLFW): importing glfw module")
+        import glfw
 
-def _create_program(vertex_source: str, fragment_source: str) -> int:
-    """Create and link a shader program."""
-    vertex_shader = _compile_shader(vertex_source, gl.GL_VERTEX_SHADER)
-    try:
-        fragment_shader = _compile_shader(fragment_source, gl.GL_FRAGMENT_SHADER)
-    except RuntimeError:
-        gl.glDeleteShader(vertex_shader)
-        raise
+        logger.debug("_init_backend_concrete (GLFW): calling glfw.init()")
+        if not glfw.init():
+            raise RuntimeError("glfw.init() failed")
 
-    program = gl.glCreateProgram()
-    gl.glAttachShader(program, vertex_shader)
-    gl.glAttachShader(program, fragment_shader)
-    gl.glLinkProgram(program)
-
-    gl.glDeleteShader(vertex_shader)
-    gl.glDeleteShader(fragment_shader)
-
-    if gl.glGetProgramiv(program, gl.GL_LINK_STATUS) != gl.GL_TRUE:
-        error = gl.glGetProgramInfoLog(program).decode()
-        gl.glDeleteProgram(program)
-        raise RuntimeError(f"Program linking failed:\n{error}")
-
-    return program
-
-
-def _render_shader_batch(
-    fragment_code: str,
-    width: int,
-    height: int,
-    image_batches: list[list[np.ndarray]],
-    floats: list[float],
-    ints: list[int],
-) -> list[list[np.ndarray]]:
-    """
-    Render a fragment shader for multiple batches efficiently.
-
-    Compiles shader once, reuses framebuffer/textures across batches.
-    Supports multi-pass rendering via #pragma passes N directive.
-
-    Args:
-        fragment_code: User's fragment shader code
-        width: Output width
-        height: Output height
-        image_batches: List of batches, each batch is a list of input images (H, W, C) float32 [0,1]
-        floats: List of float uniforms
-        ints: List of int uniforms
-
-    Returns:
-        List of batch outputs, each is a list of output images (H, W, 4) float32 [0,1]
-    """
-    import time
-    start_time = time.perf_counter()
-
-    if not image_batches:
-        return []
-
-    ctx = GLContext()
-    ctx.make_current()
-
-    # Convert from GLSL ES to desktop GLSL 330
-    fragment_source = _convert_es_to_desktop(fragment_code)
-
-    # Detect how many outputs the shader actually uses
-    num_outputs = _detect_output_count(fragment_code)
-
-    # Detect multi-pass rendering
-    num_passes = _detect_pass_count(fragment_code)
-
-    # Track resources for cleanup
-    program = None
-    fbo = None
-    output_textures = []
-    input_textures = []
-    ping_pong_textures = []
-    ping_pong_fbos = []
-
-    num_inputs = len(image_batches[0])
-
-    try:
-        # Compile shaders (once for all batches)
         try:
-            program = _create_program(VERTEX_SHADER, fragment_source)
-        except RuntimeError:
-            logger.error(f"Fragment shader:\n{fragment_source}")
+            logger.debug("_init_backend_concrete (GLFW): setting window hints")
+            glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
+            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+            glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+
+            logger.debug("_init_backend_concrete (GLFW): calling create_window()")
+            window = glfw.create_window(64, 64, "ComfyUI GLSL", None, None)
+            if not window:
+                raise RuntimeError("glfw.create_window() failed")
+
+            logger.debug("_init_backend_concrete (GLFW): calling make_context_current()")
+            glfw.make_context_current(window)
+        except Exception:
+            logger.debug("_init_backend_concrete (GLFW): failed, terminating glfw")
+            glfw.terminate()
             raise
 
-        gl.glUseProgram(program)
+        self._window = window
+        self._glfw = glfw
 
-        # Create framebuffer with only the needed color attachments
-        fbo = gl.glGenFramebuffers(1)
-        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
+        logger.debug("_init_backend_concrete (GLFW): completed successfully")
 
-        draw_buffers = []
-        for i in range(num_outputs):
-            tex = gl.glGenTextures(1)
-            output_textures.append(tex)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
-            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, width, height, 0, gl.GL_RGBA, gl.GL_FLOAT, None)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-            gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0 + i, gl.GL_TEXTURE_2D, tex, 0)
-            draw_buffers.append(gl.GL_COLOR_ATTACHMENT0 + i)
+    def _make_current_concrete(self):
+        self._glfw.make_context_current(self._window)
 
-        gl.glDrawBuffers(num_outputs, draw_buffers)
+##########
 
-        if gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) != gl.GL_FRAMEBUFFER_COMPLETE:
-            raise RuntimeError("Framebuffer is not complete")
+class _GLContextEGL(GLContext):
+    """Concrete GLContext using EGL backend."""
+    @classmethod
+    def backend_name(cls) -> str:
+        return "EGL"
 
-        # Create ping-pong resources for multi-pass rendering
-        if num_passes > 1:
-            for _ in range(2):
-                pp_tex = gl.glGenTextures(1)
-                ping_pong_textures.append(pp_tex)
-                gl.glBindTexture(gl.GL_TEXTURE_2D, pp_tex)
-                gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, width, height, 0, gl.GL_RGBA, gl.GL_FLOAT, None)
+    def _init_backend_concrete(self):
+        """Initialize EGL for headless rendering. Raises RuntimeError on failure."""
+        logger.debug("_init_backend_concrete (EGL): starting")
+        from OpenGL import EGL
+        logger.debug("_init_backend_concrete (EGL): imports completed")
+
+        display = None
+        context = None
+        surface = None
+
+        try:
+            logger.debug("_init_backend_concrete (EGL): calling eglGetDisplay()")
+            display = EGL.eglGetDisplay(EGL.EGL_DEFAULT_DISPLAY)
+            if display == EGL.EGL_NO_DISPLAY:
+                raise RuntimeError("eglGetDisplay() failed")
+
+            logger.debug("_init_backend_concrete (EGL): calling eglInitialize()")
+            major, minor = EGL.EGLint(), EGL.EGLint()
+            if not EGL.eglInitialize(display, major, minor):
+                display = None  # Not initialized, don't terminate
+                raise RuntimeError("eglInitialize() failed")
+            logger.debug(f"_init_backend_concrete (EGL): EGL version {major.value}.{minor.value}")
+
+            config_attribs = [
+                EGL.EGL_SURFACE_TYPE, EGL.EGL_PBUFFER_BIT,
+                EGL.EGL_RENDERABLE_TYPE, EGL.EGL_OPENGL_BIT,
+                EGL.EGL_RED_SIZE, 8, EGL.EGL_GREEN_SIZE, 8, EGL.EGL_BLUE_SIZE, 8, EGL.EGL_ALPHA_SIZE, 8,
+                EGL.EGL_DEPTH_SIZE, 0, EGL.EGL_NONE
+            ]
+            configs = (EGL.EGLConfig * 1)()
+            num_configs = EGL.EGLint()
+            if not EGL.eglChooseConfig(display, config_attribs, configs, 1, num_configs) or num_configs.value == 0:
+                raise RuntimeError("eglChooseConfig() failed")
+            config = configs[0]
+            logger.debug(f"_init_backend_concrete (EGL): config chosen, num_configs={num_configs.value}")
+
+            if not EGL.eglBindAPI(EGL.EGL_OPENGL_API):
+                raise RuntimeError("eglBindAPI() failed")
+
+            logger.debug("_init_backend_concrete (EGL): calling eglCreateContext()")
+            context_attribs = [
+                EGL.EGL_CONTEXT_MAJOR_VERSION, 3,
+                EGL.EGL_CONTEXT_MINOR_VERSION, 3,
+                EGL.EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL.EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT,
+                EGL.EGL_NONE
+            ]
+            context = EGL.eglCreateContext(display, config, EGL.EGL_NO_CONTEXT, context_attribs)
+            if context == EGL.EGL_NO_CONTEXT:
+                raise RuntimeError("eglCreateContext() failed")
+
+            logger.debug("_init_backend_concrete (EGL): calling eglCreatePbufferSurface()")
+            pbuffer_attribs = [EGL.EGL_WIDTH, 64, EGL.EGL_HEIGHT, 64, EGL.EGL_NONE]
+            surface = EGL.eglCreatePbufferSurface(display, config, pbuffer_attribs)
+            if surface == EGL.EGL_NO_SURFACE:
+                raise RuntimeError("eglCreatePbufferSurface() failed")
+
+            logger.debug("_init_backend_concrete (EGL): calling eglMakeCurrent()")
+            if not EGL.eglMakeCurrent(display, surface, surface, context):
+                raise RuntimeError("eglMakeCurrent() failed")
+
+        except Exception:
+            logger.debug("_init_backend_concrete (EGL): failed, cleaning up")
+            # Clean up any resources on failure
+            if surface is not None:
+                EGL.eglDestroySurface(display, surface)
+            if context is not None:
+                EGL.eglDestroyContext(display, context)
+            if display is not None:
+                EGL.eglTerminate(display)
+            raise
+
+        self._egl_display = display
+        self._egl_context = context
+        self._egl_surface = surface
+
+        self._EGL = EGL
+        self._eglMakeCurrent = EGL.eglMakeCurrent
+
+        logger.debug("_init_backend_concrete (EGL): completed successfully")
+
+    def _make_current_concrete(self):
+        self._eglMakeCurrent(self._egl_display, self._egl_surface, self._egl_surface, self._egl_context)
+
+##########
+
+class _GLContextOSMesa(GLContext):
+    """Concrete GLContext using OSMesa backend."""
+    @classmethod
+    def backend_name(cls) -> str:
+        return "OSMesa"
+
+    def _init_backend_concrete(self):
+        """Initialize OSMesa for software rendering. Returns (context, buffer). Raises RuntimeError on failure."""
+        import ctypes
+
+        logger.debug("_init_backend_concrete (OSMesa): starting")
+        os.environ["PYOPENGL_PLATFORM"] = "osmesa"
+
+        logger.debug("_init_backend_concrete (OSMesa): importing OpenGL.osmesa")
+        from OpenGL import GL
+        from OpenGL.osmesa import (
+            OSMesaCreateContextExt, OSMesaMakeCurrent, OSMesaDestroyContext,
+            OSMESA_RGBA,
+        )
+        logger.debug("_init_backend_concrete (OSMesa): imports completed")
+
+        ctx = OSMesaCreateContextExt(OSMESA_RGBA, 24, 0, 0, None)
+        if not ctx:
+            raise RuntimeError("OSMesaCreateContextExt() failed")
+
+        width, height = 64, 64
+        buffer = (ctypes.c_ubyte * (width * height * 4))()
+
+        logger.debug("_init_backend_concrete (OSMesa): calling OSMesaMakeCurrent()")
+        if not OSMesaMakeCurrent(ctx, buffer, GL.GL_UNSIGNED_BYTE, width, height):
+            OSMesaDestroyContext(ctx)
+            raise RuntimeError("OSMesaMakeCurrent() failed")
+
+        self._osmesa_ctx = ctx
+        self._osmesa_buffer = buffer
+
+        logger.debug("_init_backend_concrete (OSMesa): completed successfully")
+
+    def _make_current_concrete(self):
+        from OpenGL.osmesa import OSMesaMakeCurrent
+        OSMesaMakeCurrent(self._osmesa_ctx, self._osmesa_buffer, self._gl.GL_UNSIGNED_BYTE, 64, 64)
+
+
+############################################################
+
+
+class __GLRenderMeta(type):
+    """Internal metaclass for ``GLRender``.
+
+    Implemented as meta - to make ``GLRender`` truly static, including class-level properties which are also properly type-detected by IDEs.
+    """
+
+    @property
+    def context(cls) -> GLContext:
+        """Global OpenGL context."""
+        try:
+            # noinspection PyUnresolvedReferences
+            return cls.__context
+        except AttributeError:
+            pass
+        # noinspection PyAttributeOutsideInit
+        cls.__context = GLContext()
+        return cls.__context
+
+    def compile_shader(cls, source: str, shader_type: int) -> int:
+        """Compile a shader and return its ID."""
+        gl = cls.context.GL
+
+        shader = gl.glCreateShader(shader_type)
+        gl.glShaderSource(shader, source)
+        gl.glCompileShader(shader)
+
+        if gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS) != gl.GL_TRUE:
+            error = gl.glGetShaderInfoLog(shader).decode()
+            gl.glDeleteShader(shader)
+            raise RuntimeError(f"Shader compilation failed:\n{error}")
+
+        return shader
+
+    def create_program(cls, vertex_source: str, fragment_source: str) -> int:
+        """Create and link a shader program."""
+        gl = cls.context.GL
+        compile_shader = cls.compile_shader
+
+        vertex_shader = compile_shader(vertex_source, gl.GL_VERTEX_SHADER)
+        try:
+            fragment_shader = compile_shader(fragment_source, gl.GL_FRAGMENT_SHADER)
+        except RuntimeError:
+            gl.glDeleteShader(vertex_shader)
+            raise
+
+        program = gl.glCreateProgram()
+        gl.glAttachShader(program, vertex_shader)
+        gl.glAttachShader(program, fragment_shader)
+        gl.glLinkProgram(program)
+
+        gl.glDeleteShader(vertex_shader)
+        gl.glDeleteShader(fragment_shader)
+
+        if gl.glGetProgramiv(program, gl.GL_LINK_STATUS) != gl.GL_TRUE:
+            error = gl.glGetProgramInfoLog(program).decode()
+            gl.glDeleteProgram(program)
+            raise RuntimeError(f"Program linking failed:\n{error}")
+
+        return program
+
+    def __gen_default_texture(cls, width: int, height: int) -> int:
+        """Initializes a texture of default type. Returns the handle."""
+        gl = cls.context.GL
+        tex: int = gl.glGenTextures(1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, width, height, 0, gl.GL_RGBA, gl.GL_FLOAT, None)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+        return tex
+
+    def render_shader_batch(
+        cls,
+        fragment_code: str,
+        width: int,
+        height: int,
+        image_batches: list[list[np.ndarray]],
+        floats: list[float],
+        ints: list[int],
+    ) -> list[list[np.ndarray]]:
+        """
+        Render a fragment shader for multiple batches efficiently.
+
+        Compiles shader once, reuses framebuffer/textures across batches.
+        Supports multi-pass rendering via #pragma passes N directive.
+
+        Args:
+            fragment_code: User's fragment shader code
+            width: Output width
+            height: Output height
+            image_batches: List of batches, each batch is a list of input images (H, W, C) float32 [0,1]
+            floats: List of float uniforms
+            ints: List of int uniforms
+
+        Returns:
+            List of batch outputs, each is a list of output images (H, W, 4) float32 [0,1]
+        """
+        import time
+
+        gl = cls.context.GL
+
+        start_time = time.perf_counter()
+
+        if not image_batches:
+            return []
+
+        cls.context.make_current()
+
+        # Convert from GLSL ES to desktop GLSL 330
+        fragment_source = _convert_es_to_desktop(fragment_code)
+
+        # Detect how many outputs the shader actually uses
+        num_outputs = _detect_output_count(fragment_code)
+
+        # Detect multi-pass rendering
+        num_passes = _detect_pass_count(fragment_code)
+
+        # Track resources for cleanup
+        program = None
+        fbo = None
+        output_textures = []
+        input_textures = []
+        ping_pong_textures = []
+        ping_pong_fbos = []
+
+        num_inputs = len(image_batches[0])
+
+        try:
+            # Compile shaders (once for all batches)
+            try:
+                program = cls.create_program(VERTEX_SHADER, fragment_source)
+            except RuntimeError:
+                logger.error(f"Fragment shader:\n{fragment_source}")
+                raise
+
+            gl.glUseProgram(program)
+
+            # Create framebuffer with only the needed color attachments
+            fbo = gl.glGenFramebuffers(1)
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
+
+            draw_buffers = []
+            for i in range(num_outputs):
+                tex = cls.__gen_default_texture(width, height)
+                output_textures.append(tex)
+                gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0 + i, gl.GL_TEXTURE_2D, tex, 0)
+                draw_buffers.append(gl.GL_COLOR_ATTACHMENT0 + i)
+
+            gl.glDrawBuffers(num_outputs, draw_buffers)
+
+            if gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) != gl.GL_FRAMEBUFFER_COMPLETE:
+                raise RuntimeError("Framebuffer is not complete")
+
+            # Create ping-pong resources for multi-pass rendering
+            if num_passes > 1:
+                for _ in range(2):
+                    pp_tex = cls.__gen_default_texture(width, height)
+                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+                    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
+                    ping_pong_textures.append(pp_tex)
+
+                    pp_fbo = gl.glGenFramebuffers(1)
+                    ping_pong_fbos.append(pp_fbo)
+                    gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, pp_fbo)
+                    gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, pp_tex, 0)
+                    gl.glDrawBuffers(1, [gl.GL_COLOR_ATTACHMENT0])
+
+                    if gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) != gl.GL_FRAMEBUFFER_COMPLETE:
+                        raise RuntimeError("Ping-pong framebuffer is not complete")
+
+            # Create input textures (reused for all batches)
+            for i in range(num_inputs):
+                tex = gl.glGenTextures(1)
+                input_textures.append(tex)
+                gl.glActiveTexture(gl.GL_TEXTURE0 + i)
+                gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
                 gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
                 gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
                 gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
                 gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
 
-                pp_fbo = gl.glGenFramebuffers(1)
-                ping_pong_fbos.append(pp_fbo)
-                gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, pp_fbo)
-                gl.glFramebufferTexture2D(gl.GL_FRAMEBUFFER, gl.GL_COLOR_ATTACHMENT0, gl.GL_TEXTURE_2D, pp_tex, 0)
-                gl.glDrawBuffers(1, [gl.GL_COLOR_ATTACHMENT0])
+                loc = gl.glGetUniformLocation(program, f"u_image{i}")
+                if loc >= 0:
+                    gl.glUniform1i(loc, i)
 
-                if gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) != gl.GL_FRAMEBUFFER_COMPLETE:
-                    raise RuntimeError("Ping-pong framebuffer is not complete")
-
-        # Create input textures (reused for all batches)
-        for i in range(num_inputs):
-            tex = gl.glGenTextures(1)
-            input_textures.append(tex)
-            gl.glActiveTexture(gl.GL_TEXTURE0 + i)
-            gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-
-            loc = gl.glGetUniformLocation(program, f"u_image{i}")
+            # Set static uniforms (once for all batches)
+            loc = gl.glGetUniformLocation(program, "u_resolution")
             if loc >= 0:
-                gl.glUniform1i(loc, i)
+                gl.glUniform2f(loc, float(width), float(height))
 
-        # Set static uniforms (once for all batches)
-        loc = gl.glGetUniformLocation(program, "u_resolution")
-        if loc >= 0:
-            gl.glUniform2f(loc, float(width), float(height))
+            for i, v in enumerate(floats):
+                loc = gl.glGetUniformLocation(program, f"u_float{i}")
+                if loc >= 0:
+                    gl.glUniform1f(loc, v)
 
-        for i, v in enumerate(floats):
-            loc = gl.glGetUniformLocation(program, f"u_float{i}")
-            if loc >= 0:
-                gl.glUniform1f(loc, v)
+            for i, v in enumerate(ints):
+                loc = gl.glGetUniformLocation(program, f"u_int{i}")
+                if loc >= 0:
+                    gl.glUniform1i(loc, v)
 
-        for i, v in enumerate(ints):
-            loc = gl.glGetUniformLocation(program, f"u_int{i}")
-            if loc >= 0:
-                gl.glUniform1i(loc, v)
+            # Get u_pass uniform location for multi-pass
+            pass_loc = gl.glGetUniformLocation(program, "u_pass")
 
-        # Get u_pass uniform location for multi-pass
-        pass_loc = gl.glGetUniformLocation(program, "u_pass")
+            gl.glViewport(0, 0, width, height)
+            gl.glDisable(gl.GL_BLEND)  # Ensure no alpha blending - write output directly
 
-        gl.glViewport(0, 0, width, height)
-        gl.glDisable(gl.GL_BLEND)  # Ensure no alpha blending - write output directly
+            # Process each batch
+            all_batch_outputs = []
+            for images in image_batches:
+                # Update input textures with this batch's images
+                for i, img in enumerate(images):
+                    gl.glActiveTexture(gl.GL_TEXTURE0 + i)
+                    gl.glBindTexture(gl.GL_TEXTURE_2D, input_textures[i])
 
-        # Process each batch
-        all_batch_outputs = []
-        for images in image_batches:
-            # Update input textures with this batch's images
-            for i, img in enumerate(images):
-                gl.glActiveTexture(gl.GL_TEXTURE0 + i)
-                gl.glBindTexture(gl.GL_TEXTURE_2D, input_textures[i])
+                    # Flip vertically for GL coordinates, ensure RGBA
+                    h, w, c = img.shape
+                    if c == 3:
+                        img_upload = np.empty((h, w, 4), dtype=np.float32)
+                        img_upload[:, :, :3] = img[::-1, :, :]
+                        img_upload[:, :, 3] = 1.0
+                    else:
+                        img_upload = np.ascontiguousarray(img[::-1, :, :])
 
-                # Flip vertically for GL coordinates, ensure RGBA
-                h, w, c = img.shape
-                if c == 3:
-                    img_upload = np.empty((h, w, 4), dtype=np.float32)
-                    img_upload[:, :, :3] = img[::-1, :, :]
-                    img_upload[:, :, 3] = 1.0
-                else:
-                    img_upload = np.ascontiguousarray(img[::-1, :, :])
+                    gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, w, h, 0, gl.GL_RGBA, gl.GL_FLOAT, img_upload)
 
-                gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F, w, h, 0, gl.GL_RGBA, gl.GL_FLOAT, img_upload)
-
-            if num_passes == 1:
-                # Single pass - render directly to output FBO
-                gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
-                if pass_loc >= 0:
-                    gl.glUniform1i(pass_loc, 0)
-                gl.glClearColor(0, 0, 0, 0)
-                gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-                gl.glDrawArrays(gl.GL_TRIANGLES, 0, 3)
-            else:
-                # Multi-pass rendering with ping-pong
-                for p in range(num_passes):
-                    is_last_pass = (p == num_passes - 1)
-
-                    # Set pass uniform
+                if num_passes == 1:
+                    # Single pass - render directly to output FBO
+                    gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
                     if pass_loc >= 0:
-                        gl.glUniform1i(pass_loc, p)
-
-                    if is_last_pass:
-                        # Last pass renders to the main output FBO
-                        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
-                    else:
-                        # Intermediate passes render to ping-pong FBO
-                        target_fbo = ping_pong_fbos[p % 2]
-                        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, target_fbo)
-
-                    # Set input texture for this pass
-                    gl.glActiveTexture(gl.GL_TEXTURE0)
-                    if p == 0:
-                        # First pass reads from original input
-                        gl.glBindTexture(gl.GL_TEXTURE_2D, input_textures[0])
-                    else:
-                        # Subsequent passes read from previous pass output
-                        source_tex = ping_pong_textures[(p - 1) % 2]
-                        gl.glBindTexture(gl.GL_TEXTURE_2D, source_tex)
-
+                        gl.glUniform1i(pass_loc, 0)
                     gl.glClearColor(0, 0, 0, 0)
                     gl.glClear(gl.GL_COLOR_BUFFER_BIT)
                     gl.glDrawArrays(gl.GL_TRIANGLES, 0, 3)
+                else:
+                    # Multi-pass rendering with ping-pong
+                    for p in range(num_passes):
+                        is_last_pass = (p == num_passes - 1)
 
-            # Read back outputs for this batch
-            # (glGetTexImage is synchronous, implicitly waits for rendering)
-            batch_outputs = []
+                        # Set pass uniform
+                        if pass_loc >= 0:
+                            gl.glUniform1i(pass_loc, p)
+
+                        if is_last_pass:
+                            # Last pass renders to the main output FBO
+                            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo)
+                        else:
+                            # Intermediate passes render to ping-pong FBO
+                            target_fbo = ping_pong_fbos[p % 2]
+                            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, target_fbo)
+
+                        # Set input texture for this pass
+                        gl.glActiveTexture(gl.GL_TEXTURE0)
+                        if p == 0:
+                            # First pass reads from original input
+                            gl.glBindTexture(gl.GL_TEXTURE_2D, input_textures[0])
+                        else:
+                            # Subsequent passes read from previous pass output
+                            source_tex = ping_pong_textures[(p - 1) % 2]
+                            gl.glBindTexture(gl.GL_TEXTURE_2D, source_tex)
+
+                        gl.glClearColor(0, 0, 0, 0)
+                        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+                        gl.glDrawArrays(gl.GL_TRIANGLES, 0, 3)
+
+                # Read back outputs for this batch
+                # (glGetTexImage is synchronous, implicitly waits for rendering)
+                batch_outputs = []
+                for tex in output_textures:
+                    gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
+                    data = gl.glGetTexImage(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, gl.GL_FLOAT)
+                    img = np.frombuffer(data, dtype=np.float32).reshape(height, width, 4)
+                    batch_outputs.append(img[::-1, :, :].copy())
+
+                # Pad with black images for unused outputs
+                black_img = np.zeros((height, width, 4), dtype=np.float32)
+                for _ in range(num_outputs, MAX_OUTPUTS):
+                    batch_outputs.append(black_img)
+
+                all_batch_outputs.append(batch_outputs)
+
+            elapsed = (time.perf_counter() - start_time) * 1000
+            num_batches = len(image_batches)
+            pass_info = f", {num_passes} passes" if num_passes > 1 else ""
+            logger.info(f"GLSL shader executed in {elapsed:.1f}ms ({num_batches} batch{'es' if num_batches != 1 else ''}, {width}x{height}{pass_info})")
+
+            return all_batch_outputs
+
+        finally:
+            # Unbind before deleting
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+            gl.glUseProgram(0)
+
+            for tex in input_textures:
+                gl.glDeleteTextures(tex)
             for tex in output_textures:
-                gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
-                data = gl.glGetTexImage(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, gl.GL_FLOAT)
-                img = np.frombuffer(data, dtype=np.float32).reshape(height, width, 4)
-                batch_outputs.append(img[::-1, :, :].copy())
+                gl.glDeleteTextures(tex)
+            for tex in ping_pong_textures:
+                gl.glDeleteTextures(tex)
+            if fbo is not None:
+                gl.glDeleteFramebuffers(1, [fbo])
+            for pp_fbo in ping_pong_fbos:
+                gl.glDeleteFramebuffers(1, [pp_fbo])
+            if program is not None:
+                gl.glDeleteProgram(program)
 
-            # Pad with black images for unused outputs
-            black_img = np.zeros((height, width, 4), dtype=np.float32)
-            for _ in range(num_outputs, MAX_OUTPUTS):
-                batch_outputs.append(black_img)
+##########
 
-            all_batch_outputs.append(batch_outputs)
+class GLRender(metaclass=__GLRenderMeta):
+    """Static class for all the high-level methods to render with OpenGL. Never instantiated, methods called directly as functions."""
 
-        elapsed = (time.perf_counter() - start_time) * 1000
-        num_batches = len(image_batches)
-        pass_info = f", {num_passes} passes" if num_passes > 1 else ""
-        logger.info(f"GLSL shader executed in {elapsed:.1f}ms ({num_batches} batch{'es' if num_batches != 1 else ''}, {width}x{height}{pass_info})")
+    def __init__(self):
+        raise NotImplementedError(f"{self.__class__!r} is a static class - call its methods directly, as just functions, without instantiating.")
 
-        return all_batch_outputs
 
-    finally:
-        # Unbind before deleting
-        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
-        gl.glUseProgram(0)
+############################################################
 
-        for tex in input_textures:
-            gl.glDeleteTextures(tex)
-        for tex in output_textures:
-            gl.glDeleteTextures(tex)
-        for tex in ping_pong_textures:
-            gl.glDeleteTextures(tex)
-        if fbo is not None:
-            gl.glDeleteFramebuffers(1, [fbo])
-        for pp_fbo in ping_pong_fbos:
-            gl.glDeleteFramebuffers(1, [pp_fbo])
-        if program is not None:
-            gl.glDeleteProgram(program)
 
 class GLSLShader(io.ComfyNode):
 
@@ -839,7 +926,7 @@ class GLSLShader(io.ComfyNode):
             batch_images = [img_tensor[batch_idx].cpu().numpy().astype(np.float32) for img_tensor in image_list]
             image_batches.append(batch_images)
 
-        all_batch_outputs = _render_shader_batch(
+        all_batch_outputs = GLRender.render_shader_batch(
             fragment_shader,
             out_width,
             out_height,
