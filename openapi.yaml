@@ -1517,6 +1517,22 @@ paths:
           schema:
             type: integer
             default: 0
+          description: |
+            Offset-based pagination. Cursor pagination via `after` is preferred
+            for sequential walks (stable across concurrent inserts/deletes) but
+            `offset` remains fully supported for random access (jump-to-page
+            UIs, "showing items X–Y of N" displays). When both are supplied,
+            `after` wins and `offset` is ignored.
+        - name: after
+          in: query
+          schema:
+            type: string
+          description: |
+            Opaque cursor for keyset pagination. Pass the `next_cursor` value
+            from a previous response to fetch the next page. Stable across
+            inserts/deletes between pages. Supported with `sort` values
+            `created_at`, `updated_at`, `name`, and `size`. Malformed or
+            unsupported cursors return 400 with `INVALID_CURSOR`.
         - name: include_tags
           in: query
           schema:
@@ -1575,6 +1591,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListAssetsResponse"
+        "400":
+          description: Malformed query or cursor (e.g. `INVALID_CURSOR`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetsApiError"
     post:
       operationId: createAsset
       tags: [assets]
@@ -6782,6 +6804,42 @@ components:
           type: integer
         has_more:
           type: boolean
+        next_cursor:
+          type: string
+          description: |
+            Opaque cursor to fetch the next page. Pass back as the `after`
+            query parameter. Omitted when there are no more results.
+
+    AssetsApiError:
+      type: object
+      description: Error envelope returned by the assets API on 400 responses.
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - details
+          properties:
+            code:
+              type: string
+              description: |
+                Machine-readable error code. `INVALID_CURSOR` is returned when the
+                `after` cursor is malformed, oversized, or its sort field does
+                not match the request's `sort`. `INVALID_QUERY` covers other
+                Pydantic validation failures.
+              enum: [INVALID_CURSOR, INVALID_QUERY]
+            message:
+              type: string
+            details:
+              type: object
+              description: |
+                Free-form, code-specific context. `INVALID_QUERY` populates this
+                with an `errors` array of Pydantic validation entries;
+                `INVALID_CURSOR` returns an empty object.
+              additionalProperties: true
 
     TagInfo:
       type: object

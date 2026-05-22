@@ -40,6 +40,8 @@ class AssetsList(BaseModel):
     assets: list[Asset]
     total: int
     has_more: bool
+    # Opaque cursor for the next page. Omitted when there are no more results.
+    next_cursor: str | None = None
 
 
 class TagUsage(BaseModel):

@@ -71,6 +71,7 @@ class AssetSummaryData:
 class ListAssetsResult:
     items: list[AssetSummaryData]
     total: int
+    next_cursor: str | None = None
 
 
 @dataclass(frozen=True)
