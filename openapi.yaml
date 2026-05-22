@@ -6610,7 +6610,18 @@ components:
           description: Unique identifier for the asset
         name:
           type: string
+          deprecated: true
           description: Name of the asset file
+        file_path:
+          type: string
+          nullable: true
+          x-runtime: [cloud, local]
+          description: "Logical asset locator under the namespace root. Not a unique reference key; use `id` for identity."
+        display_name:
+          type: string
+          nullable: true
+          x-runtime: [cloud, local]
+          description: "Human-facing display label for the asset. Not a unique reference key; use `id` for identity."
         hash:
           type: string
           nullable: true

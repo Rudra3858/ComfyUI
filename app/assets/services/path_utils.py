@@ -8,6 +8,8 @@ from app.assets.helpers import normalize_tags
 
 _NON_MODEL_FOLDER_NAMES = frozenset({"custom_nodes"})
 
+RootCategory = Literal["input", "output", "temp", "models"]
+
 
 def get_comfy_models_folders() -> list[tuple[str, list[str]]]:
     """Build list of (folder_name, base_paths[]) for all model locations.
@@ -65,35 +67,109 @@ def validate_path_within_base(candidate: str, base: str) -> None:
         raise ValueError("destination escapes base directory")
 
 
-def compute_relative_filename(file_path: str) -> str | None:
-    """
-    Return the model's path relative to the last well-known folder (the model category),
-    using forward slashes, eg:
-      /.../models/checkpoints/flux/123/flux.safetensors -> "flux/123/flux.safetensors"
-      /.../models/text_encoders/clip_g.safetensors -> "clip_g.safetensors"
+def compute_paths_for_response(
+    file_path: str,
+) -> tuple[str, str | None] | None:
+    """Compute (file_path, display_name) for an Asset response.
 
-    For non-model paths, returns None.
+    `file_path` is a logical locator under the asset namespace: `<root>/<rel>`
+    for input/output/temp assets and `<root>/<bucket>/<rel>` for model assets.
+    `display_name` is the path below that root or model bucket, suitable for UI
+    labels. Returns None when the absolute path is not under a known asset root.
     """
     try:
-        root_category, rel_path = get_asset_category_and_relative_path(file_path)
+        root, bucket, rel = get_asset_root_bucket_and_filepath(file_path)
     except ValueError:
         return None
 
-    p = Path(rel_path)
-    parts = [seg for seg in p.parts if seg not in (".", "..", p.anchor)]
-    if not parts:
-        return None
+    display_name = rel or None
+    if bucket is None:
+        response_file_path = f"{root}/{rel}" if rel else root
+    else:
+        response_file_path = f"{root}/{bucket}/{rel}" if rel else f"{root}/{bucket}"
+    return response_file_path, display_name
 
-    if root_category == "models":
-        # parts[0] is the category ("checkpoints", "vae", etc) – drop it
-        inside = parts[1:] if len(parts) > 1 else [parts[0]]
-        return "/".join(inside)
-    return "/".join(parts)  # input/output: keep all parts
+
+def compute_display_name(file_path: str) -> str | None:
+    """Return the asset's `display_name`, or None for unknown paths."""
+    result = compute_paths_for_response(file_path)
+    return result[1] if result else None
+
+
+def compute_file_path(file_path: str) -> str | None:
+    """Return the asset's logical `file_path`, or None for unknown paths."""
+    result = compute_paths_for_response(file_path)
+    return result[0] if result else None
+
+
+def compute_relative_filename(file_path: str) -> str | None:
+    """
+    Return the path relative to the asset root or model category, using forward slashes, eg:
+      /.../models/checkpoints/flux/123/flux.safetensors -> "flux/123/flux.safetensors"
+      /.../models/text_encoders/clip_g.safetensors -> "clip_g.safetensors"
+      /.../input/sub/image.png -> "sub/image.png"
+
+    For unknown paths, returns None.
+    """
+    return compute_display_name(file_path)
+
+
+def get_asset_root_bucket_and_filepath(
+    file_path: str,
+) -> tuple[RootCategory, str | None, str]:
+    """Decompose an absolute path into (root, bucket, path-under-bucket).
+
+    `bucket` is only set for model assets. The returned relative path always
+    uses `/` separators and is empty when the path is exactly the matched root.
+
+    Raises:
+        ValueError: path does not belong to any known root.
+    """
+    fp_abs = os.path.abspath(file_path)
+
+    def _check_is_within(child: str, parent: str) -> bool:
+        return Path(child).is_relative_to(parent)
+
+    def _compute_relative(child: str, parent: str) -> str:
+        # Normalize relative path, stripping any leading ".." components
+        # by anchoring to root (os.sep) then computing relpath back from it.
+        rel = os.path.relpath(
+            os.path.join(os.sep, os.path.relpath(child, parent)), os.sep
+        )
+        return "" if rel == "." else rel.replace(os.sep, "/")
+
+    for root_tag, getter in (
+        ("input", folder_paths.get_input_directory),
+        ("output", folder_paths.get_output_directory),
+        ("temp", folder_paths.get_temp_directory),
+    ):
+        base = os.path.abspath(getter())
+        if _check_is_within(fp_abs, base):
+            return root_tag, None, _compute_relative(fp_abs, base)
+
+    # models: check deepest matching base to avoid ambiguity.
+    best: tuple[int, str, str] | None = None
+    for bucket, bases in get_comfy_models_folders():
+        for b in bases:
+            base_abs = os.path.abspath(b)
+            if not _check_is_within(fp_abs, base_abs):
+                continue
+            cand = (len(base_abs), bucket, _compute_relative(fp_abs, base_abs))
+            if best is None or cand[0] > best[0]:
+                best = cand
+
+    if best is not None:
+        _, bucket, rel_inside = best
+        return "models", bucket, rel_inside
+
+    raise ValueError(
+        f"Path is not within input, output, temp, or configured model bases: {file_path}"
+    )
 
 
 def get_asset_category_and_relative_path(
     file_path: str,
-) -> tuple[Literal["input", "output", "temp", "models"], str]:
+) -> tuple[RootCategory, str]:
     """Determine which root category a file path belongs to.
 
     Categories:

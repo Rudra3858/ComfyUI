@@ -9,7 +9,9 @@ class Asset(BaseModel):
     ``id`` here is the AssetReference id, not the content-addressed Asset id."""
 
     id: str
-    name: str
+    name: str = Field(..., deprecated=True)
+    file_path: str | None = None
+    display_name: str | None = None
     asset_hash: str | None = None
     size: int | None = None
     mime_type: str | None = None
