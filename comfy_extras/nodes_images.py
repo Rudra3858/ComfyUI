@@ -209,7 +209,7 @@ class SaveAnimatedWEBP(IO.ComfyNode):
                 IO.Float.Input("fps", default=6.0, min=0.01, max=1000.0, step=0.01),
                 IO.Boolean.Input("lossless", default=True),
                 IO.Int.Input("quality", default=80, min=0, max=100),
-                IO.Combo.Input("method", options=list(cls.COMPRESS_METHODS.keys())),
+                IO.Combo.Input("method", options=list(cls.COMPRESS_METHODS.keys()), default="fastest"),
                 # "num_frames": ("INT", {"default": 0, "min": 0, "max": 8192}),
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
