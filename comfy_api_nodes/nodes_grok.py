@@ -104,6 +104,13 @@ class GrokImageNode(IO.ComfyNode):
                     "actual results are nondeterministic regardless of seed.",
                 ),
                 IO.Combo.Input("resolution", options=["1K", "2K"], optional=True),
+                IO.String.Input(
+                    "xai_api_key",
+                    default="",
+                    tooltip="Your xAI API Key (optional). If provided, it will bypass Comfy org limits.",
+                    optional=True,
+                    advanced=True,
+                ),
             ],
             outputs=[
                 IO.Image.Output(),
@@ -136,11 +143,23 @@ class GrokImageNode(IO.ComfyNode):
         number_of_images: int,
         seed: int,
         resolution: str = "1K",
+        xai_api_key: str = "",
     ) -> IO.NodeOutput:
         validate_string(prompt, strip_whitespace=True, min_length=1)
+
+        xai_api_key = xai_api_key.strip()
+        if xai_api_key.lower().startswith("bearer "):
+            xai_api_key = xai_api_key[7:].strip()
+
+        path = "/proxy/xai/v1/images/generations"
+        headers = None
+        if xai_api_key:
+            path = "https://api.x.ai/v1/images/generations"
+            headers = {"Authorization": f"Bearer {xai_api_key}"}
+
         response = await sync_op(
             cls,
-            ApiEndpoint(path="/proxy/xai/v1/images/generations", method="POST"),
+            ApiEndpoint(path=path, method="POST", headers=headers),
             data=ImageGenerationRequest(
                 model=model,
                 prompt=prompt,
@@ -282,6 +301,13 @@ class GrokImageEditNode(IO.ComfyNode):
                     optional=True,
                     tooltip="Only allowed when multiple images are connected to the image input.",
                 ),
+                IO.String.Input(
+                    "xai_api_key",
+                    default="",
+                    tooltip="Your xAI API Key (optional). If provided, it will bypass Comfy org limits.",
+                    optional=True,
+                    advanced=True,
+                ),
             ],
             outputs=[
                 IO.Image.Output(),
@@ -322,6 +348,7 @@ class GrokImageEditNode(IO.ComfyNode):
         number_of_images: int,
         seed: int,
         aspect_ratio: str = "auto",
+        xai_api_key: str = "",
     ) -> IO.NodeOutput:
         validate_string(prompt, strip_whitespace=True, min_length=1)
         if model == "grok-imagine-image-pro":
@@ -333,9 +360,20 @@ class GrokImageEditNode(IO.ComfyNode):
             raise ValueError(
                 "Custom aspect ratio is only allowed when multiple images are connected to the image input."
             )
+
+        xai_api_key = xai_api_key.strip()
+        if xai_api_key.lower().startswith("bearer "):
+            xai_api_key = xai_api_key[7:].strip()
+
+        path = "/proxy/xai/v1/images/edits"
+        headers = None
+        if xai_api_key:
+            path = "https://api.x.ai/v1/images/edits"
+            headers = {"Authorization": f"Bearer {xai_api_key}"}
+
         response = await sync_op(
             cls,
-            ApiEndpoint(path="/proxy/xai/v1/images/edits", method="POST"),
+            ApiEndpoint(path=path, method="POST", headers=headers),
             data=ImageEditRequest(
                 model=model,
                 images=[InputUrlObject(url=f"data:image/png;base64,{tensor_to_base64_string(i)}") for i in image],
@@ -541,6 +579,13 @@ class GrokVideoNode(IO.ComfyNode):
                     "actual results are nondeterministic regardless of seed.",
                 ),
                 IO.Image.Input("image", optional=True),
+                IO.String.Input(
+                    "xai_api_key",
+                    default="",
+                    tooltip="Your xAI API Key (optional). If provided, it will bypass Comfy org limits.",
+                    optional=True,
+                    advanced=True,
+                ),
             ],
             outputs=[
                 IO.Video.Output(),
@@ -573,6 +618,7 @@ class GrokVideoNode(IO.ComfyNode):
         duration: int,
         seed: int,
         image: Input.Image | None = None,
+        xai_api_key: str = "",
     ) -> IO.NodeOutput:
         image_url = None
         if image is not None:
@@ -580,9 +626,20 @@ class GrokVideoNode(IO.ComfyNode):
                 raise ValueError("Only one input image is supported.")
             image_url = InputUrlObject(url=f"data:image/png;base64,{tensor_to_base64_string(image)}")
         validate_string(prompt, strip_whitespace=True, min_length=1)
+
+        xai_api_key = xai_api_key.strip()
+        if xai_api_key.lower().startswith("bearer "):
+            xai_api_key = xai_api_key[7:].strip()
+
+        path = "/proxy/xai/v1/videos/generations"
+        headers = None
+        if xai_api_key:
+            path = "https://api.x.ai/v1/videos/generations"
+            headers = {"Authorization": f"Bearer {xai_api_key}"}
+
         initial_response = await sync_op(
             cls,
-            ApiEndpoint(path="/proxy/xai/v1/videos/generations", method="POST"),
+            ApiEndpoint(path=path, method="POST", headers=headers),
             data=VideoGenerationRequest(
                 model=model,
                 image=image_url,
@@ -594,9 +651,13 @@ class GrokVideoNode(IO.ComfyNode):
             ),
             response_model=VideoGenerationResponse,
         )
+        poll_path = f"/proxy/xai/v1/videos/{initial_response.request_id}"
+        if xai_api_key:
+            poll_path = f"https://api.x.ai/v1/videos/{initial_response.request_id}"
+
         response = await poll_op(
             cls,
-            ApiEndpoint(path=f"/proxy/xai/v1/videos/{initial_response.request_id}"),
+            ApiEndpoint(path=poll_path, headers=headers),
             status_extractor=lambda r: r.status if r.status is not None else "complete",
             response_model=VideoStatusResponse,
             price_extractor=_extract_grok_price,
@@ -632,6 +693,13 @@ class GrokVideoEditNode(IO.ComfyNode):
                     tooltip="Seed to determine if node should re-run; "
                     "actual results are nondeterministic regardless of seed.",
                 ),
+                IO.String.Input(
+                    "xai_api_key",
+                    default="",
+                    tooltip="Your xAI API Key (optional). If provided, it will bypass Comfy org limits.",
+                    optional=True,
+                    advanced=True,
+                ),
             ],
             outputs=[
                 IO.Video.Output(),
@@ -654,6 +722,7 @@ class GrokVideoEditNode(IO.ComfyNode):
         prompt: str,
         video: Input.Video,
         seed: int,
+        xai_api_key: str = "",
     ) -> IO.NodeOutput:
         validate_string(prompt, strip_whitespace=True, min_length=1)
         validate_video_duration(video, min_duration=1, max_duration=8.7)
@@ -661,9 +730,20 @@ class GrokVideoEditNode(IO.ComfyNode):
         video_size = get_fs_object_size(video_stream)
         if video_size > 50 * 1024 * 1024:
             raise ValueError(f"Video size ({video_size / 1024 / 1024:.1f}MB) exceeds 50MB limit.")
+
+        xai_api_key = xai_api_key.strip()
+        if xai_api_key.lower().startswith("bearer "):
+            xai_api_key = xai_api_key[7:].strip()
+
+        path = "/proxy/xai/v1/videos/edits"
+        headers = None
+        if xai_api_key:
+            path = "https://api.x.ai/v1/videos/edits"
+            headers = {"Authorization": f"Bearer {xai_api_key}"}
+
         initial_response = await sync_op(
             cls,
-            ApiEndpoint(path="/proxy/xai/v1/videos/edits", method="POST"),
+            ApiEndpoint(path=path, method="POST", headers=headers),
             data=VideoEditRequest(
                 model=model,
                 video=InputUrlObject(url=await upload_video_to_comfyapi(cls, video)),
@@ -672,9 +752,13 @@ class GrokVideoEditNode(IO.ComfyNode):
             ),
             response_model=VideoGenerationResponse,
         )
+        poll_path = f"/proxy/xai/v1/videos/{initial_response.request_id}"
+        if xai_api_key:
+            poll_path = f"https://api.x.ai/v1/videos/{initial_response.request_id}"
+
         response = await poll_op(
             cls,
-            ApiEndpoint(path=f"/proxy/xai/v1/videos/{initial_response.request_id}"),
+            ApiEndpoint(path=poll_path, headers=headers),
             status_extractor=lambda r: r.status if r.status is not None else "complete",
             response_model=VideoStatusResponse,
             price_extractor=_extract_grok_price,
@@ -748,6 +832,13 @@ class GrokVideoReferenceNode(IO.ComfyNode):
                     tooltip="Seed to determine if node should re-run; "
                     "actual results are nondeterministic regardless of seed.",
                 ),
+                IO.String.Input(
+                    "xai_api_key",
+                    default="",
+                    tooltip="Your xAI API Key (optional). If provided, it will bypass Comfy org limits.",
+                    optional=True,
+                    advanced=True,
+                ),
             ],
             outputs=[
                 IO.Video.Output(),
@@ -782,8 +873,18 @@ class GrokVideoReferenceNode(IO.ComfyNode):
         prompt: str,
         model: dict,
         seed: int,
+        xai_api_key: str = "",
     ) -> IO.NodeOutput:
         validate_string(prompt, strip_whitespace=True, min_length=1)
+
+        xai_api_key = xai_api_key.strip()
+        if xai_api_key.lower().startswith("bearer "):
+            xai_api_key = xai_api_key[7:].strip()
+
+        # We must use proxy to upload images temporarily even if they provide their own key for video generation
+        # because the API requires URLs and we use our proxy for image hosting during the request.
+        # Wait, if they are providing their own key to our backend for generation,
+        # `upload_images_to_comfyapi` relies on `comfyapi`. This is fine.
         ref_image_urls = await upload_images_to_comfyapi(
             cls,
             list(model["reference_images"].values()),
@@ -791,9 +892,16 @@ class GrokVideoReferenceNode(IO.ComfyNode):
             wait_label="Uploading base images",
             max_images=7,
         )
+
+        path = "/proxy/xai/v1/videos/generations"
+        headers = None
+        if xai_api_key:
+            path = "https://api.x.ai/v1/videos/generations"
+            headers = {"Authorization": f"Bearer {xai_api_key}"}
+
         initial_response = await sync_op(
             cls,
-            ApiEndpoint(path="/proxy/xai/v1/videos/generations", method="POST"),
+            ApiEndpoint(path=path, method="POST", headers=headers),
             data=VideoGenerationRequest(
                 model=model["model"],
                 reference_images=[InputUrlObject(url=i) for i in ref_image_urls],
@@ -805,9 +913,13 @@ class GrokVideoReferenceNode(IO.ComfyNode):
             ),
             response_model=VideoGenerationResponse,
         )
+        poll_path = f"/proxy/xai/v1/videos/{initial_response.request_id}"
+        if xai_api_key:
+            poll_path = f"https://api.x.ai/v1/videos/{initial_response.request_id}"
+
         response = await poll_op(
             cls,
-            ApiEndpoint(path=f"/proxy/xai/v1/videos/{initial_response.request_id}"),
+            ApiEndpoint(path=poll_path, headers=headers),
             status_extractor=lambda r: r.status if r.status is not None else "complete",
             response_model=VideoStatusResponse,
             price_extractor=_extract_grok_video_price,
@@ -862,6 +974,13 @@ class GrokVideoExtendNode(IO.ComfyNode):
                     tooltip="Seed to determine if node should re-run; "
                     "actual results are nondeterministic regardless of seed.",
                 ),
+                IO.String.Input(
+                    "xai_api_key",
+                    default="",
+                    tooltip="Your xAI API Key (optional). If provided, it will bypass Comfy org limits.",
+                    optional=True,
+                    advanced=True,
+                ),
             ],
             outputs=[
                 IO.Video.Output(),
@@ -894,15 +1013,27 @@ class GrokVideoExtendNode(IO.ComfyNode):
         video: Input.Video,
         model: dict,
         seed: int,
+        xai_api_key: str = "",
     ) -> IO.NodeOutput:
         validate_string(prompt, strip_whitespace=True, min_length=1)
         validate_video_duration(video, min_duration=2, max_duration=15)
         video_size = get_fs_object_size(video.get_stream_source())
         if video_size > 50 * 1024 * 1024:
             raise ValueError(f"Video size ({video_size / 1024 / 1024:.1f}MB) exceeds 50MB limit.")
+
+        xai_api_key = xai_api_key.strip()
+        if xai_api_key.lower().startswith("bearer "):
+            xai_api_key = xai_api_key[7:].strip()
+
+        path = "/proxy/xai/v1/videos/extensions"
+        headers = None
+        if xai_api_key:
+            path = "https://api.x.ai/v1/videos/extensions"
+            headers = {"Authorization": f"Bearer {xai_api_key}"}
+
         initial_response = await sync_op(
             cls,
-            ApiEndpoint(path="/proxy/xai/v1/videos/extensions", method="POST"),
+            ApiEndpoint(path=path, method="POST", headers=headers),
             data=VideoExtensionRequest(
                 prompt=prompt,
                 video=InputUrlObject(url=await upload_video_to_comfyapi(cls, video)),
@@ -910,9 +1041,13 @@ class GrokVideoExtendNode(IO.ComfyNode):
             ),
             response_model=VideoGenerationResponse,
         )
+        poll_path = f"/proxy/xai/v1/videos/{initial_response.request_id}"
+        if xai_api_key:
+            poll_path = f"https://api.x.ai/v1/videos/{initial_response.request_id}"
+
         response = await poll_op(
             cls,
-            ApiEndpoint(path=f"/proxy/xai/v1/videos/{initial_response.request_id}"),
+            ApiEndpoint(path=poll_path, headers=headers),
             status_extractor=lambda r: r.status if r.status is not None else "complete",
             response_model=VideoStatusResponse,
             price_extractor=_extract_grok_video_price,
