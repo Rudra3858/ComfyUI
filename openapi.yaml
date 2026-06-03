@@ -8328,6 +8328,13 @@ components:
           enum: [input, output, temp]
         display_name:
           type: string
+        id:
+          type: string
+          format: uuid
+          description: |
+            Asset reference UUID. Present only when the server is started with
+            `--enable-assets` and the file resolves to a registered asset.
+            Fetch the full asset via `GET /api/assets/{id}`.
 
     NodeOutputs:
       type: object

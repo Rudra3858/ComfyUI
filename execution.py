@@ -40,6 +40,7 @@ from comfy_execution.graph_utils import GraphBuilder, is_link
 from comfy_execution.validation import validate_node_input
 from comfy_execution.progress import get_progress_state, reset_progress_state, add_progress_handler, WebUIProgressHandler
 from comfy_execution.utils import CurrentNodeContext
+from comfy_execution.asset_enrichment import enrich_output_with_assets
 from comfy_api.internal import _ComfyNodeInternal, _NodeOutputInternal, first_real_override, is_class, make_locked_method_func
 from comfy_api.latest import io, _io
 from comfy_execution.cache_provider import _has_cache_providers, _get_cache_providers, _logger as _cache_logger
@@ -418,11 +419,15 @@ def _is_intermediate_output(dynprompt, node_id):
     class_def = nodes.NODE_CLASS_MAPPINGS[class_type]
     return getattr(class_def, 'HAS_INTERMEDIATE_OUTPUT', False)
 
+
 def _send_cached_ui(server, node_id, display_node_id, cached, prompt_id, ui_outputs):
     if server.client_id is None:
         return
     cached_ui = cached.ui or {}
-    server.send_sync("executed", { "node": node_id, "display_node": display_node_id, "output": cached_ui.get("output", None), "prompt_id": prompt_id }, server.client_id)
+    output = cached_ui.get("output", None)
+    if output:
+        output = enrich_output_with_assets(output)
+    server.send_sync("executed", { "node": node_id, "display_node": display_node_id, "output": output, "prompt_id": prompt_id }, server.client_id)
     if cached.ui is not None:
         ui_outputs[node_id] = cached.ui
 
@@ -562,7 +567,7 @@ async def execute(server, dynprompt, caches, current_item, extra_data, executed,
                 "output": output_ui
             }
             if server.client_id is not None:
-                server.send_sync("executed", { "node": unique_id, "display_node": display_node_id, "output": output_ui, "prompt_id": prompt_id }, server.client_id)
+                server.send_sync("executed", { "node": unique_id, "display_node": display_node_id, "output": enrich_output_with_assets(output_ui), "prompt_id": prompt_id }, server.client_id)
         if has_subgraph:
             cached_outputs = []
             new_node_ids = []
