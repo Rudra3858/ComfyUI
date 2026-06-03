@@ -149,6 +149,16 @@ def delete_asset_reference(
     owner_id: str,
     delete_content_if_orphan: bool = True,
 ) -> bool:
+    """Delete an asset reference.
+
+    With ``delete_content_if_orphan=False`` (a soft delete), the reference is
+    hidden and the underlying content is preserved. With ``True``, the content
+    is also removed once it becomes orphaned.
+
+    Note: the public DELETE /api/assets/{id} endpoint always soft-deletes
+    (passes ``False``); the orphan-reclamation path is intentionally
+    internal-only, retained for a future GC/admin caller.
+    """
     with create_session() as session:
         if not delete_content_if_orphan:
             # Soft delete: mark the reference as deleted but keep everything

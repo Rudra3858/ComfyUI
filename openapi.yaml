@@ -2311,7 +2311,7 @@ paths:
       operationId: deleteAsset
       tags: [assets]
       summary: Delete an asset
-      description: Removes an asset entry. Depending on the server configuration, the underlying content may also be deleted.
+      description: Removes an asset entry. The underlying content is preserved (it may be shared with other references).
       x-feature-gate: enable-assets
       parameters:
         - name: id
@@ -2321,11 +2321,6 @@ paths:
           schema:
             type: string
             format: uuid
-        - name: delete_content
-          in: query
-          schema:
-            type: boolean
-          description: Also delete the underlying content file
       responses:
         "204":
           description: Asset deleted

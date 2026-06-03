@@ -519,18 +519,14 @@ async def update_asset_route(request: web.Request) -> web.Response:
 @_require_assets_feature_enabled
 async def delete_asset_route(request: web.Request) -> web.Response:
     reference_id = str(uuid.UUID(request.match_info["id"]))
-    delete_content_param = request.query.get("delete_content")
-    delete_content = (
-        False
-        if delete_content_param is None
-        else delete_content_param.lower() not in {"0", "false", "no"}
-    )
 
     try:
+        # Deleting an asset is a soft delete of the reference; the underlying
+        # content is preserved (it may be shared with other references).
         deleted = delete_asset_reference(
             reference_id=reference_id,
             owner_id=USER_MANAGER.get_request_user_id(request),
-            delete_content_if_orphan=delete_content,
+            delete_content_if_orphan=False,
         )
     except Exception:
         logging.exception(
