@@ -214,11 +214,13 @@ class SaveAnimatedWEBP(IO.ComfyNode):
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
             is_output_node=True,
+            outputs=[IO.Image.Output(display_name="images")]
         )
 
     @classmethod
     def execute(cls, images, fps, filename_prefix, lossless, quality, method, num_frames=0) -> IO.NodeOutput:
         return IO.NodeOutput(
+            images,
             ui=UI.ImageSaveHelper.get_save_animated_webp_ui(
                 images=images,
                 filename_prefix=filename_prefix,
@@ -229,8 +231,6 @@ class SaveAnimatedWEBP(IO.ComfyNode):
                 method=cls.COMPRESS_METHODS.get(method)
             )
         )
-
-    save_images = execute  # TODO: remove
 
 
 class SaveAnimatedPNG(IO.ComfyNode):
@@ -249,11 +249,13 @@ class SaveAnimatedPNG(IO.ComfyNode):
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
             is_output_node=True,
+            outputs=[IO.Image.Output(display_name="images")]
         )
 
     @classmethod
     def execute(cls, images, fps, compress_level, filename_prefix="ComfyUI") -> IO.NodeOutput:
         return IO.NodeOutput(
+            images,
             ui=UI.ImageSaveHelper.get_save_animated_png_ui(
                 images=images,
                 filename_prefix=filename_prefix,
@@ -262,8 +264,6 @@ class SaveAnimatedPNG(IO.ComfyNode):
                 compress_level=compress_level,
             )
         )
-
-    save_images = execute  # TODO: remove
 
 
 class ImageStitch(IO.ComfyNode):
@@ -513,6 +513,7 @@ class SaveSVGNode(IO.ComfyNode):
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
             is_output_node=True,
+            outputs=[IO.SVG.Output("svg")],
         )
 
     @classmethod
@@ -562,9 +563,7 @@ class SaveSVGNode(IO.ComfyNode):
 
             results.append(UI.SavedResult(filename=file, subfolder=subfolder, type=IO.FolderType.output))
             counter += 1
-        return IO.NodeOutput(ui={"images": results})
-
-    save_svg = execute  # TODO: remove
+        return IO.NodeOutput(svg, ui={"images": results})
 
 
 class GetImageSize(IO.ComfyNode):
@@ -1200,6 +1199,7 @@ class SaveImageAdvanced(IO.ComfyNode):
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
             is_output_node=True,
+            outputs=[IO.Image.Output(display_name="images")]
         )
 
     @classmethod
@@ -1237,7 +1237,7 @@ class SaveImageAdvanced(IO.ComfyNode):
             results.append({"filename": file, "subfolder": subfolder, "type": "output"})
             counter += 1
 
-        return IO.NodeOutput(ui={"images": results})
+        return IO.NodeOutput(images, ui={"images": results})
 
 
 class ImagesExtension(ComfyExtension):

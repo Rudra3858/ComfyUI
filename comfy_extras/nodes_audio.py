@@ -167,6 +167,7 @@ class SaveAudio(IO.ComfyNode):
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
             is_output_node=True,
+            outputs=[IO.Audio.Output("audio")]
         )
 
     @classmethod
@@ -174,10 +175,9 @@ class SaveAudio(IO.ComfyNode):
         if audio is None:
             raise ValueError("SaveAudio: input audio is None (source video may have no audio track).")
         return IO.NodeOutput(
+            audio,
             ui=UI.AudioSaveHelper.get_save_audio_ui(audio, filename_prefix=filename_prefix, cls=cls, format=format)
         )
-
-    save_flac = execute  # TODO: remove
 
 
 class SaveAudioMP3(IO.ComfyNode):
@@ -196,6 +196,7 @@ class SaveAudioMP3(IO.ComfyNode):
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
             is_output_node=True,
+            outputs=[IO.Audio.Output("audio")]
         )
 
     @classmethod
@@ -203,12 +204,11 @@ class SaveAudioMP3(IO.ComfyNode):
         if audio is None:
             raise ValueError("SaveAudioMP3: input audio is None (source video may have no audio track).")
         return IO.NodeOutput(
+            audio,
             ui=UI.AudioSaveHelper.get_save_audio_ui(
                 audio, filename_prefix=filename_prefix, cls=cls, format=format, quality=quality
             )
         )
-
-    save_mp3 = execute  # TODO: remove
 
 
 class SaveAudioOpus(IO.ComfyNode):
@@ -226,6 +226,7 @@ class SaveAudioOpus(IO.ComfyNode):
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
             is_output_node=True,
+            outputs=[IO.Audio.Output("audio")]
         )
 
     @classmethod
@@ -233,12 +234,11 @@ class SaveAudioOpus(IO.ComfyNode):
         if audio is None:
             raise ValueError("SaveAudioOpus: input audio is None (source video may have no audio track).")
         return IO.NodeOutput(
+            audio,
             ui=UI.AudioSaveHelper.get_save_audio_ui(
                 audio, filename_prefix=filename_prefix, cls=cls, format=format, quality=quality
             )
         )
-
-    save_opus = execute  # TODO: remove
 
 
 class PreviewAudio(IO.ComfyNode):
@@ -254,13 +254,14 @@ class PreviewAudio(IO.ComfyNode):
             ],
             hidden=[IO.Hidden.prompt, IO.Hidden.extra_pnginfo],
             is_output_node=True,
+            outputs=[IO.Audio.Output("audio")]
         )
 
     @classmethod
     def execute(cls, audio) -> IO.NodeOutput:
         if audio is None:
             raise ValueError("PreviewAudio: input audio is None (source video may have no audio track).")
-        return IO.NodeOutput(ui=UI.PreviewAudio(audio, cls=cls))
+        return IO.NodeOutput(audio, ui=UI.PreviewAudio(audio, cls=cls))
 
     save_flac = execute  # TODO: remove
 
