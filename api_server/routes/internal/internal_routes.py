@@ -3,6 +3,7 @@ from typing import Optional
 from folder_paths import folder_names_and_paths, get_directory_by_type
 from api_server.services.terminal_service import TerminalService
 import app.logger
+import ipaddress
 import os
 
 class InternalRoutes:
@@ -72,7 +73,24 @@ class InternalRoutes:
 
     def get_app(self):
         if self._app is None:
-            self._app = web.Application()
+            self._app = web.Application(middlewares=[self._local_only_middleware])
             self.setup_routes()
             self._app.add_routes(self.routes)
         return self._app
+
+    @web.middleware
+    async def _local_only_middleware(self, request, handler):
+        remote = request.remote
+        if remote is None:
+            raise web.HTTPForbidden(reason="Internal endpoints are only accessible from localhost")
+        try:
+            addr = ipaddress.ip_address(remote)
+            # Unwrap IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) so that
+            # is_loopback correctly evaluates the underlying IPv4 address.
+            if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+                addr = addr.ipv4_mapped
+            if not addr.is_loopback:
+                raise web.HTTPForbidden(reason="Internal endpoints are only accessible from localhost")
+        except ValueError:
+            raise web.HTTPForbidden(reason="Internal endpoints are only accessible from localhost")
+        return await handler(request)
