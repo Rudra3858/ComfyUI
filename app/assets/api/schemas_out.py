@@ -46,7 +46,6 @@ class AssetsList(BaseModel):
 class TagUsage(BaseModel):
     name: str
     count: int
-    type: str
 
 
 class TagsList(BaseModel):

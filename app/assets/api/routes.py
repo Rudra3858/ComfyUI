@@ -575,8 +575,8 @@ async def get_tags(request: web.Request) -> web.Response:
     )
 
     tags = [
-        schemas_out.TagUsage(name=name, count=count, type=tag_type)
-        for (name, tag_type, count) in rows
+        schemas_out.TagUsage(name=name, count=count)
+        for (name, count) in rows
     ]
     payload = schemas_out.TagsList(
         tags=tags, total=total, has_more=(query.offset + len(tags)) < total

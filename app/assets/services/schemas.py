@@ -56,7 +56,6 @@ class IngestResult:
 
 class TagUsage(NamedTuple):
     name: str
-    tag_type: str
     count: int
 
 
