@@ -1,11 +1,17 @@
 def is_link(obj):
-    if not isinstance(obj, list):
+    """Return whether obj is a plain prompt link of the form [node_id, output_index]."""
+    # Prompt links produced by the frontend / GraphBuilder are plain Python
+    # lists in the form [node_id, output_index]. Some custom-node paths can
+    # inject foreign runtime objects into prompt inputs during on-prompt graph
+    # rewriting or subgraph construction. Be strict here so cache signature
+    # building never tries to treat list-like proxy objects as links.
+    if type(obj) is not list:
         return False
     if len(obj) != 2:
         return False
-    if not isinstance(obj[0], str):
+    if type(obj[0]) is not str:
         return False
-    if not isinstance(obj[1], int) and not isinstance(obj[1], float):
+    if type(obj[1]) is not int:
         return False
     return True
 

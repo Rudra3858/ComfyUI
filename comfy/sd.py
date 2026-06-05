@@ -1192,7 +1192,17 @@ class VAE:
             else:
                 pixel_samples = pixel_samples.unsqueeze(2)
 
-        memory_used = self.memory_used_encode(pixel_samples.shape, self.vae_dtype)  # TODO: calculate mem required for tile
+        if dims == 2:
+            default_tile_x = 512 if tile_x is None else tile_x
+            default_tile_y = 512 if tile_y is None else tile_y
+            tile_shapes = [
+                (1, pixel_samples.shape[1], min(pixel_samples.shape[2], max(1, default_tile_y)), min(pixel_samples.shape[3], max(1, default_tile_x))),
+                (1, pixel_samples.shape[1], min(pixel_samples.shape[2], max(1, default_tile_y // 2)), min(pixel_samples.shape[3], max(1, default_tile_x * 2))),
+                (1, pixel_samples.shape[1], min(pixel_samples.shape[2], max(1, default_tile_y * 2)), min(pixel_samples.shape[3], max(1, default_tile_x // 2))),
+            ]
+            memory_used = max(self.memory_used_encode(shape, self.vae_dtype) for shape in tile_shapes)
+        else:
+            memory_used = self.memory_used_encode(pixel_samples.shape, self.vae_dtype)
         model_management.load_models_gpu([self.patcher], memory_required=memory_used, force_full_load=self.disable_offload)
 
         args = {}
