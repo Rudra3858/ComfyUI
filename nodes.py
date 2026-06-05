@@ -1692,20 +1692,46 @@ class PreviewImage(SaveImage):
                 "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
                 }
 
+
 class LoadImage:
     @classmethod
     def INPUT_TYPES(s):
         input_dir = folder_paths.get_input_directory()
-        files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
-        files = folder_paths.filter_files_content_types(files, ["image"])
+        files = []
+        limit = 1000
+        recursive_scan_failed = False
+
+        # Attempt recursive scan first
+        try:
+            for root, _, file_list in os.walk(input_dir, followlinks=False):
+                if recursive_scan_failed:
+                    break
+                
+                image_files = folder_paths.filter_files_content_types(file_list, ["image"])
+                
+                for image_file in image_files:
+                    if len(files) >= limit:
+                        recursive_scan_failed = True
+                        break
+                        
+                    path_relative = os.path.relpath(os.path.join(root, image_file), input_dir)
+                    path_relative = path_relative.replace('\\', '/')
+                    files.append(path_relative)
+        except Exception:
+            recursive_scan_failed = True
+
+        # Fallback to original non-recursive method if limit exceeded or error
+        if recursive_scan_failed or not files:
+            files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
+            files = folder_paths.filter_files_content_types(files, ["image"])
+
         return {"required":
-                    {"image": (sorted(files), {"image_upload": True})},
+                    {"image": (sorted(list(dict.fromkeys(files))), {"image_upload": True})},
                 }
 
     CATEGORY = "image"
     ESSENTIALS_CATEGORY = "Basics"
     SEARCH_ALIASES = ["load image", "open image", "import image", "image input", "upload image", "read image", "image loader"]
-
     RETURN_TYPES = ("IMAGE", "MASK")
     FUNCTION = "load_image"
 
