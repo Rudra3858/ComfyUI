@@ -252,6 +252,10 @@ class KeypointDraw:
 
                 Y = [keypoints[idx1][0], keypoints[idx2][0]]
                 X = [keypoints[idx1][1], keypoints[idx2][1]]
+
+                if math.isnan(X[0]) or math.isnan(X[1]) or math.isnan(Y[0]) or math.isnan(Y[1]):
+                    continue
+
                 mX, mY = (X[0] + X[1]) / 2, (Y[0] + Y[1]) / 2
                 length = math.sqrt((X[0] - X[1]) ** 2 + (Y[0] - Y[1]) ** 2)
 
@@ -269,6 +273,8 @@ class KeypointDraw:
             for i in range(18):
                 if scores is not None and scores[i] < threshold:
                     continue
+                if math.isnan(keypoints[i][0]) or math.isnan(keypoints[i][1]):
+                    continue
                 x, y = int(keypoints[i][0]), int(keypoints[i][1])
                 if 0 <= x < W and 0 <= y < H:
                     self.draw.circle(canvas, (x, y), 4, self.colors[i % len(self.colors)], thickness=-1)
@@ -277,6 +283,8 @@ class KeypointDraw:
         if draw_feet and len(keypoints) >= 24:
             for i in range(18, 24):
                 if scores is not None and scores[i] < threshold:
+                    continue
+                if math.isnan(keypoints[i][0]) or math.isnan(keypoints[i][1]):
                     continue
                 x, y = int(keypoints[i][0]), int(keypoints[i][1])
                 if 0 <= x < W and 0 <= y < H:
@@ -290,6 +298,9 @@ class KeypointDraw:
                 if scores is not None:
                     if scores[idx1] < threshold or scores[idx2] < threshold:
                         continue
+
+                if math.isnan(keypoints[idx1][0]) or math.isnan(keypoints[idx1][1]) or math.isnan(keypoints[idx2][0]) or math.isnan(keypoints[idx2][1]):
+                    continue
 
                 x1, y1 = int(keypoints[idx1][0]), int(keypoints[idx1][1])
                 x2, y2 = int(keypoints[idx2][0]), int(keypoints[idx2][1])
@@ -305,6 +316,8 @@ class KeypointDraw:
             for i in range(92, 113):
                 if scores is not None and scores[i] < threshold:
                     continue
+                if math.isnan(keypoints[i][0]) or math.isnan(keypoints[i][1]):
+                    continue
                 x, y = int(keypoints[i][0]), int(keypoints[i][1])
                 if x > eps and y > eps and 0 <= x < W and 0 <= y < H:
                     self.draw.circle(canvas, (x, y), 4, (0, 0, 255), thickness=-1)
@@ -317,6 +330,9 @@ class KeypointDraw:
                 if scores is not None:
                     if scores[idx1] < threshold or scores[idx2] < threshold:
                         continue
+
+                if math.isnan(keypoints[idx1][0]) or math.isnan(keypoints[idx1][1]) or math.isnan(keypoints[idx2][0]) or math.isnan(keypoints[idx2][1]):
+                    continue
 
                 x1, y1 = int(keypoints[idx1][0]), int(keypoints[idx1][1])
                 x2, y2 = int(keypoints[idx2][0]), int(keypoints[idx2][1])
@@ -332,6 +348,8 @@ class KeypointDraw:
             for i in range(113, 134):
                 if scores is not None and i < len(scores) and scores[i] < threshold:
                     continue
+                if math.isnan(keypoints[i][0]) or math.isnan(keypoints[i][1]):
+                    continue
                 x, y = int(keypoints[i][0]), int(keypoints[i][1])
                 if x > eps and y > eps and 0 <= x < W and 0 <= y < H:
                     self.draw.circle(canvas, (x, y), 4, (0, 0, 255), thickness=-1)
@@ -341,6 +359,8 @@ class KeypointDraw:
             eps = 0.01
             for i in range(24, 92):
                 if scores is not None and scores[i] < threshold:
+                    continue
+                if math.isnan(keypoints[i][0]) or math.isnan(keypoints[i][1]):
                     continue
                 x, y = int(keypoints[i][0]), int(keypoints[i][1])
                 if x > eps and y > eps and 0 <= x < W and 0 <= y < H:
