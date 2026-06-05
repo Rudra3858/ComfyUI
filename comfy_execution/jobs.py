@@ -223,11 +223,13 @@ def get_outputs_summary(outputs: dict) -> tuple[int, Optional[dict]]:
 
     Preview priority (matching frontend):
     1. type="output" with previewable media
-    2. Any previewable media
+    2. Any non-text previewable media
+    3. Text preview fallback
     """
     count = 0
     preview_output = None
     fallback_preview = None
+    text_fallback_preview = None
 
     for node_id, node_outputs in outputs.items():
         if not isinstance(node_outputs, dict):
@@ -245,7 +247,13 @@ def get_outputs_summary(outputs: dict) -> tuple[int, Optional[dict]]:
                         # Not a 3D file string — check for text preview
                         if media_type == 'text':
                             count += 1
-                            if preview_output is None:
+                            # Only create/store a text fallback when we don't yet
+                            # have a primary preview or a non-text fallback.
+                            if (
+                                preview_output is None
+                                and fallback_preview is None
+                                and text_fallback_preview is None
+                            ):
                                 if isinstance(item, tuple):
                                     text_value = item[0] if item else ''
                                 else:
@@ -256,8 +264,7 @@ def get_outputs_summary(outputs: dict) -> tuple[int, Optional[dict]]:
                                     'nodeId': node_id,
                                     'mediaType': media_type
                                 }
-                                if fallback_preview is None:
-                                    fallback_preview = enriched
+                                text_fallback_preview = enriched
                         continue
                     # normalize_output_item returned a dict (e.g. 3D file)
                     item = normalized
@@ -276,10 +283,14 @@ def get_outputs_summary(outputs: dict) -> tuple[int, Optional[dict]]:
                         enriched['mediaType'] = media_type
                     if item.get('type') == 'output':
                         preview_output = enriched
-                    elif fallback_preview is None:
-                        fallback_preview = enriched
+                    elif media_type != 'text':
+                        # Prefer non-text media (images/video/audio/3d) over text fallback.
+                        if fallback_preview is None:
+                            fallback_preview = enriched
+                    elif fallback_preview is None and text_fallback_preview is None:
+                        text_fallback_preview = enriched
 
-    return count, preview_output or fallback_preview
+    return count, preview_output or fallback_preview or text_fallback_preview
 
 
 def apply_sorting(jobs: list[dict], sort_by: str, sort_order: str) -> list[dict]:

@@ -136,6 +136,37 @@ class TestGetOutputsSummary:
         count, preview = get_outputs_summary(outputs)
         assert preview['filename'] == 'temp1.png'
 
+    def test_text_preview_does_not_override_image_fallback(self):
+        """Text output should not take precedence over image fallback previews."""
+        outputs = {
+            'node1': {
+                'text': ['debug text from PreviewAny']
+            },
+            'node2': {
+                'images': [
+                    {'filename': 'temp1.png', 'type': 'temp'}
+                ]
+            }
+        }
+        count, preview = get_outputs_summary(outputs)
+        assert count == 2
+        assert preview is not None
+        assert preview['mediaType'] == 'images'
+        assert preview['filename'] == 'temp1.png'
+
+    def test_text_fallback_used_when_only_text_exists(self):
+        """Text preview should still be used when no non-text previewable outputs exist."""
+        outputs = {
+            'node1': {
+                'text': ['debug text from PreviewAny']
+            }
+        }
+        count, preview = get_outputs_summary(outputs)
+        assert count == 1
+        assert preview is not None
+        assert preview['mediaType'] == 'text'
+        assert preview['content'] == 'debug text from PreviewAny'
+
     def test_non_previewable_media_types_counted_but_no_preview(self):
         """Non-previewable media types should be counted but not used as preview."""
         outputs = {
