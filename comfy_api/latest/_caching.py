@@ -21,6 +21,10 @@ class CacheProvider(ABC):
     Exceptions from provider methods are caught by the caller and never break execution.
     """
 
+    async def on_set_prompt(self) -> None:
+        """Called after prompt cache keys are prepared. Dispatched via asyncio.create_task."""
+        pass
+
     @abstractmethod
     async def on_lookup(self, context: CacheContext) -> Optional[CacheValue]:
         """Called on local cache miss. Return CacheValue if found, None otherwise."""
