@@ -65,6 +65,7 @@ import comfy.ldm.ernie.model
 import comfy.ldm.sam3.detector
 import comfy.ldm.hidream_o1.model
 from comfy.ldm.hidream_o1.conditioning import build_extra_conds
+import comfy.ldm.depth_anything_3.model
 
 import comfy.model_management
 import comfy.patcher_extension
@@ -2226,6 +2227,12 @@ class Kandinsky5Image(Kandinsky5):
 class RT_DETR_v4(BaseModel):
     def __init__(self, model_config, model_type=ModelType.FLOW, device=None):
         super().__init__(model_config, model_type, device=device, unet_model=comfy.ldm.rt_detr.rtdetr_v4.RTv4)
+
+
+class DepthAnything3(BaseModel):
+    def __init__(self, model_config, model_type=ModelType.FLOW, device=None):
+        super().__init__(model_config, model_type, device=device,
+                         unet_model=comfy.ldm.depth_anything_3.model.DepthAnything3Net)
 
 class ErnieImage(BaseModel):
     def __init__(self, model_config, model_type=ModelType.FLOW, device=None):

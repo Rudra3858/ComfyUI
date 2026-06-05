@@ -2045,6 +2045,101 @@ class RT_DETR_v4(supported_models_base.BASE):
         return None
 
 
+class DepthAnything3(supported_models_base.BASE):
+    unet_config = {
+        "image_model": "DepthAnything3",
+    }
+
+    # Mono path: no num_heads / num_head_channels needed.
+    unet_extra_config = {}
+
+    supported_inference_dtypes = [torch.float16, torch.bfloat16, torch.float32]
+
+    def get_model(self, state_dict, prefix="", device=None):
+        return model_base.DepthAnything3(self, device=device)
+
+    def clip_target(self, state_dict={}):
+        return None
+
+    def process_unet_state_dict(self, state_dict):
+        # Drop Gaussian-head weights; remap fused backbone QKV to Dinov2Model layout.
+        drop_prefixes = ("gs_head.", "gs_adapter.")
+        for k in list(state_dict.keys()):
+            if k.startswith(drop_prefixes):
+                state_dict.pop(k)
+        return _da3_remap_backbone_keys(state_dict, prefix="backbone.")
+
+
+def _da3_remap_backbone_keys(state_dict, prefix="backbone."):
+    """Map ``backbone.pretrained.*`` (upstream DA3) keys to ``Dinov2Model`` under ``prefix``."""
+    pre = prefix + "pretrained."
+    src_keys = [k for k in state_dict.keys() if k.startswith(pre)]
+    if not src_keys:
+        return state_dict
+
+    static_renames = {
+        pre + "patch_embed.proj.weight":  prefix + "embeddings.patch_embeddings.projection.weight",
+        pre + "patch_embed.proj.bias":    prefix + "embeddings.patch_embeddings.projection.bias",
+        pre + "pos_embed":                prefix + "embeddings.position_embeddings",
+        pre + "cls_token":                prefix + "embeddings.cls_token",
+        pre + "camera_token":             prefix + "embeddings.camera_token",
+        pre + "norm.weight":              prefix + "layernorm.weight",
+        pre + "norm.bias":                prefix + "layernorm.bias",
+    }
+    for src, dst in static_renames.items():
+        if src in state_dict:
+            state_dict[dst] = state_dict.pop(src)
+
+    block_pre = pre + "blocks."
+    block_keys = [k for k in state_dict.keys() if k.startswith(block_pre)]
+    for k in block_keys:
+        rest = k[len(block_pre):]                 # e.g. "5.attn.qkv.weight"
+        idx_str, _, sub = rest.partition(".")
+        target_block = "{}encoder.layer.{}.".format(prefix, idx_str)
+
+        # Fused QKV -> split query/key/value linears.
+        if sub == "attn.qkv.weight":
+            qkv = state_dict.pop(k)
+            c = qkv.shape[0] // 3
+            state_dict[target_block + "attention.attention.query.weight"] = qkv[:c].clone()
+            state_dict[target_block + "attention.attention.key.weight"]   = qkv[c:2 * c].clone()
+            state_dict[target_block + "attention.attention.value.weight"] = qkv[2 * c:].clone()
+            continue
+        if sub == "attn.qkv.bias":
+            qkv = state_dict.pop(k)
+            c = qkv.shape[0] // 3
+            state_dict[target_block + "attention.attention.query.bias"] = qkv[:c].clone()
+            state_dict[target_block + "attention.attention.key.bias"]   = qkv[c:2 * c].clone()
+            state_dict[target_block + "attention.attention.value.bias"] = qkv[2 * c:].clone()
+            continue
+
+        # Sub-key remap (suffix preserved).
+        if sub.startswith("attn.proj."):
+            tail = sub[len("attn.proj."):]
+            new = "attention.output.dense." + tail
+        elif sub.startswith("attn.q_norm."):
+            new = "attention.q_norm." + sub[len("attn.q_norm."):]
+        elif sub.startswith("attn.k_norm."):
+            new = "attention.k_norm." + sub[len("attn.k_norm."):]
+        elif sub == "ls1.gamma":
+            new = "layer_scale1.lambda1"
+        elif sub == "ls2.gamma":
+            new = "layer_scale2.lambda1"
+        elif sub.startswith("mlp.w12."):
+            new = "mlp.weights_in." + sub[len("mlp.w12."):]
+        elif sub.startswith("mlp.w3."):
+            new = "mlp.weights_out." + sub[len("mlp.w3."):]
+        elif sub.startswith(("norm1.", "norm2.", "mlp.fc1.", "mlp.fc2.")):
+            new = sub
+        else:
+            # Unrecognised key -- leave as-is so load_state_dict can complain.
+            continue
+
+        state_dict[target_block + new] = state_dict.pop(k)
+
+    return state_dict
+
+
 class ErnieImage(supported_models_base.BASE):
     unet_config = {
         "image_model": "ernie",
@@ -2286,4 +2381,5 @@ models = [
     CogVideoX_I2V,
     CogVideoX_T2V,
     SVD_img2vid,
+    DepthAnything3,
 ]
