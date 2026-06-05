@@ -39,7 +39,41 @@ if __name__ == "__main__":
 
 faulthandler.enable(file=sys.stderr, all_threads=False)
 
-import comfy_aimdo.control
+try:
+    import comfy_aimdo.control
+except ImportError:
+    logging.info("comfy-aimdo not installed. DynamicVRAM will not be available.")
+    import types
+
+    class _AimdoStub:
+        """No-op stub for comfy_aimdo submodules when the package is not installed.
+
+        All attribute accesses return self and all calls return False (falsy),
+        which prevents any aimdo-guarded code paths from activating while still
+        allowing the import to succeed on non-NVIDIA hardware (e.g. AMD/ROCm).
+        """
+        def __getattr__(self, name):
+            return _AimdoStub()
+
+        def __call__(self, *args, **kwargs):
+            return False
+
+        def __bool__(self):
+            return False
+
+        def __int__(self):
+            return 0
+
+        def __float__(self):
+            return 0.0
+
+    _aimdo_pkg = types.ModuleType('comfy_aimdo')
+    for _submod_name in ('control', 'model_vbar', 'torch', 'host_buffer', 'model_mmap'):
+        _stub = _AimdoStub()
+        setattr(_aimdo_pkg, _submod_name, _stub)
+        sys.modules[f'comfy_aimdo.{_submod_name}'] = _stub
+    sys.modules['comfy_aimdo'] = _aimdo_pkg
+    import comfy_aimdo  # Now resolves to the stub from sys.modules
 
 if enables_dynamic_vram():
     comfy_aimdo.control.init()
