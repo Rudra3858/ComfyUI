@@ -23,6 +23,7 @@ from comfy.deploy_environment import get_deploy_environment
 
 from . import request_logger
 from ._helpers import (
+    _retry_after_wait,
     default_base_url,
     get_auth_header,
     get_node_id,
@@ -84,6 +85,7 @@ class _PollUIState:
 
 
 _RETRY_STATUS = {408, 500, 502, 503, 504}  # status 429 is handled separately
+_MAX_RETRY_AFTER_WAIT = 120.0  # Cap a server Retry-After at this many seconds so a large hint can't block execution
 COMPLETED_STATUSES = ["succeeded", "succeed", "success", "completed", "finished", "done", "complete"]
 FAILED_STATUSES = ["cancelled", "canceled", "canceling", "fail", "failed", "error"]
 QUEUED_STATUSES = ["created", "queued", "queueing", "submitted", "initializing", "wait", "in_queue"]
@@ -748,6 +750,8 @@ async def _request_base(cfg: _RequestConfig, expect_binary: bool):
                         delay *= cfg.retry_backoff
                         retry_label = f"retry {attempt - rate_limit_attempts} of {cfg.max_retries}"
                         should_retry = True
+                        # Honor a server Retry-After (capped at our max wait) in place of the backoff delay.
+                        wait_time = _retry_after_wait(resp.headers.get("Retry-After"), wait_time, _MAX_RETRY_AFTER_WAIT)
 
                     if should_retry:
                         logging.warning(
