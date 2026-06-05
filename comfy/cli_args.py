@@ -231,6 +231,13 @@ parser.add_argument(
     help="Set the base URL for the ComfyUI API.  (default: https://api.comfy.org)",
 )
 
+parser.add_argument(
+    "--comfy-platform-base",
+    type=str,
+    default="https://platform.comfy.org",
+    help="Set the base URL for the ComfyUI Platform.  (default: https://platform.comfy.org)",
+)
+
 database_default_path = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "user", "comfyui.db")
 )

@@ -99,6 +99,8 @@ _CORE_FEATURE_FLAGS: dict[str, Any] = {
     "extension": {"manager": {"supports_v4": True}},
     "node_replacements": True,
     "assets": args.enable_assets,
+    "comfy_api_base_url": args.comfy_api_base,
+    "comfy_platform_base_url": args.comfy_platform_base,
 }
 
 # CLI-provided flags cannot overwrite core flags

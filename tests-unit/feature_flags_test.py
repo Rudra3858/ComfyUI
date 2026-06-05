@@ -32,6 +32,17 @@ class TestFeatureFlags:
         assert "max_upload_size" in features
         assert isinstance(features["max_upload_size"], (int, float))
 
+    def test_get_server_features_exposes_comfy_api_base_urls(self):
+        """The frontend reads comfy_api_base_url / comfy_platform_base_url
+        from /features to learn which backend to talk to. The keys must be
+        present (with the CLI-provided or default URL) so an ephemeral or
+        self-hosted comfy-api can override them without a frontend rebuild."""
+        features = get_server_features()
+        assert isinstance(features.get("comfy_api_base_url"), str)
+        assert features["comfy_api_base_url"].startswith("http")
+        assert isinstance(features.get("comfy_platform_base_url"), str)
+        assert features["comfy_platform_base_url"].startswith("http")
+
     def test_get_connection_feature_with_missing_sid(self):
         """Test getting feature for non-existent session ID."""
         sockets_metadata = {}
