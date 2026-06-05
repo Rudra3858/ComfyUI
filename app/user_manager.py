@@ -81,7 +81,7 @@ class UserManager():
         path = user_root
 
         # prevent leaving /{type}
-        if os.path.commonpath((root_dir, user_root)) != root_dir:
+        if not folder_paths.is_path_within_directory(user_root, root_dir):
             return None
 
         if file is not None:
@@ -91,7 +91,7 @@ class UserManager():
 
             # prevent leaving /{type}/{user}
             path = os.path.abspath(os.path.join(user_root, file))
-            if os.path.commonpath((user_root, path)) != user_root:
+            if not folder_paths.is_path_within_directory(path, user_root):
                 return None
 
         parent = os.path.split(path)[0]
